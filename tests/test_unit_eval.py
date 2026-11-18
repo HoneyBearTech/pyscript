@@ -302,6 +302,52 @@ class Annotated:
 """,
         [["ok"], {"a": int, "b": int}, 3, True],
     ],
+    [
+        """
+class Foo:
+    pass
+
+class Bar:
+    z: Foo | None = None
+    w: list[Foo] = []
+[Bar.__annotations__["z"] == (Foo | None), Bar.__annotations__["w"] == list[Foo], Bar.z]
+""",
+        [True, True, None],
+    ],
+    [
+        """
+from dataclasses import dataclass
+
+class Foo:
+    pass
+
+@dataclass
+class Bar:
+    name: str
+    z: Foo | None = None
+
+foo = Foo()
+obj1 = Bar("abc")
+obj2 = Bar("xyz", foo)
+[obj1.name, obj1.z, obj2.name, obj2.z is foo]
+""",
+        ["abc", None, "xyz", True],
+    ],
+    [
+        """
+class Foo:
+    pass
+
+def func():
+    global Foo
+    return Foo | None
+
+class Node:
+    nxt: Node = None
+[func() == (Foo | None), Node.nxt]
+""",
+        [True, None],
+    ],
     ["Foo = [type('Foo', (), {'x': 100})]; Foo[0].x = 10; Foo[0].x", 10],
     ["Foo = [type('Foo', (), {'x': [100, 101]})]; Foo[0].x[1] = 10; Foo[0].x", [100, 10]],
     ["Foo = [type('Foo', (), {'x': [0, [[100, 101]]]})]; Foo[0].x[1][0][1] = 10; Foo[0].x[1]", [[100, 10]]],
