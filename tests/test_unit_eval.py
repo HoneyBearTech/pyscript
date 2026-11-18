@@ -245,6 +245,62 @@ Child().tag()
     ],
     [
         """
+class Base:
+    def __init__(self, name="default"):
+        self.name = name
+
+class Child(Base):
+    pass
+
+class GrandChild(Child):
+    pass
+
+class OwnInit(Child):
+    def __init__(self):
+        self.name = "own"
+
+[
+    Child().name,
+    Child("given").name,
+    Child(name="kw").name,
+    GrandChild().name,
+    GrandChild("deep").name,
+    OwnInit().name,
+]
+""",
+        ["default", "given", "kw", "default", "deep", "own"],
+    ],
+    [
+        """
+from dataclasses import dataclass
+
+class Base:
+    def __init__(self):
+        self.base = True
+
+@dataclass
+class DataChild(Base):
+    num: int = 1
+
+class Mixin:
+    def __init__(self, *args, **kwargs):
+        self.mixin = args
+
+class MixedChild(Mixin, Base):
+    pass
+
+class DictChild(dict, Base):
+    pass
+
+obj = DataChild(5)
+mixed = MixedChild(1, 2)
+dct = DictChild({"a": 1})
+[obj.num, hasattr(obj, "base"), mixed.mixin, hasattr(mixed, "base"), dct, hasattr(dct, "base")]
+""",
+        [5, False, (1, 2), False, {"a": 1}, False],
+    ],
+    [
+        """
 from dataclasses import dataclass
 
 @dataclass()

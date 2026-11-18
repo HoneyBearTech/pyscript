@@ -1087,7 +1087,6 @@ class AstEval:
         self.sym_table = self.sym_table_stack.pop()
 
         decorators = [await self.aeval(dec) for dec in arg.decorator_list]
-        sym_table["__init__evalfunc_wrap__"] = None
         if "__init__" in sym_table:
             sym_table["__init__evalfunc_wrap__"] = sym_table["__init__"]
             del sym_table["__init__"]
@@ -1886,6 +1885,16 @@ class AstEval:
             func = func.get()
         return await self.call_func(func, func_name, *args, **kwargs)
 
+    @staticmethod
+    def has_init_wrapper(func):
+        """Return whether the first __init__ in the class's MRO is a renamed pyscript one."""
+        for klass in func.__mro__:
+            if "__init__evalfunc_wrap__" in klass.__dict__:
+                return True
+            if "__init__" in klass.__dict__:
+                return False
+        return False
+
     async def call_func(self, func, func_name, *args, **kwargs):
         """Call a function with the given arguments."""
         if func_name is None:
@@ -1900,14 +1909,12 @@ class AstEval:
         _LOGGER.debug("%s: calling %s(%s, %s)", self.name, func_name, arg_str, kwargs)
         if isinstance(func, (EvalFunc, EvalFuncVar)):
             return await func.call(self, *args, **kwargs)
-        if inspect.isclass(func) and hasattr(func, "__init__evalfunc_wrap__"):
-            has_init_wrapper = getattr(func, "__init__evalfunc_wrap__") is not None
-            inst = func(*args, **kwargs) if not has_init_wrapper else func()
-            if has_init_wrapper:
-                #
-                # since our __init__ function is async, call the renamed one
-                #
-                await inst.__init__evalfunc_wrap__.call(self, *args, **kwargs)
+        if inspect.isclass(func) and self.has_init_wrapper(func):
+            #
+            # since our __init__ function is async, call the renamed one
+            #
+            inst = func()
+            await inst.__init__evalfunc_wrap__.call(self, *args, **kwargs)
             return inst
         if inspect.iscoroutinefunction(func):
             return await func(*args, **kwargs)
