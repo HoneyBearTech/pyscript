@@ -1524,8 +1524,7 @@ class AstEval:
             #
             if self.curr_func and arg.id in self.curr_func.global_names:
                 if arg.id in self.global_sym_table:
-                    val = self.global_sym_table[arg.id]
-                    return val.get() if isinstance(val, EvalLocalVar) and val.is_defined() else val
+                    return self.global_sym_table[arg.id]
                 raise NameError(f"global name '{arg.id}' is not defined")
             #
             # now check in our current symbol table, and then some other places
@@ -1911,10 +1910,13 @@ class AstEval:
             return await func.call(self, *args, **kwargs)
         if inspect.isclass(func) and self.has_init_wrapper(func):
             #
-            # since our __init__ function is async, call the renamed one
+            # since our __init__ function is async, call the renamed one after
+            # creating the instance; as in Python, it only runs if the result is
+            # an instance of the class
             #
             inst = func()
-            await inst.__init__evalfunc_wrap__.call(self, *args, **kwargs)
+            if isinstance(inst, func):
+                await inst.__init__evalfunc_wrap__.call(self, *args, **kwargs)
             return inst
         if inspect.iscoroutinefunction(func):
             return await func(*args, **kwargs)

@@ -301,6 +301,61 @@ dct = DictChild({"a": 1})
     ],
     [
         """
+import logging
+
+class ListHandler(logging.Handler):
+    def __init__(self):
+        logging.Handler.__init__(self)
+        self.msgs = []
+
+    @pyscript_compile
+    def emit(self, record):
+        self.msgs.append(record.getMessage())
+
+handler = ListHandler()
+logger = logging.getLogger("pyscript_test_eval_list_handler")
+logger.propagate = False
+logger.addHandler(handler)
+try:
+    logger.warning("hi")
+finally:
+    logger.removeHandler(handler)
+handler.msgs
+""",
+        ["hi"],
+    ],
+    [
+        """
+calls = []
+Meta = type("Meta", (type,), {"__call__": lambda cls, *a, **k: calls.append(a) or type.__call__(cls, *a, **k)})
+
+class A(metaclass=Meta):
+    def __init__(self, x=0):
+        self.x = x
+
+[A(5).x, len(calls)]
+""",
+        [5, 1],
+    ],
+    [
+        """
+class Base:
+    def __init__(self):
+        self.value = 1
+
+    @pyscript_compile
+    def __new__(cls):
+        return 123
+
+class Child(Base):
+    pass
+
+[Base(), Child()]
+""",
+        [123, 123],
+    ],
+    [
+        """
 from dataclasses import dataclass
 
 @dataclass()
@@ -391,18 +446,29 @@ obj2 = Bar("xyz", foo)
     ],
     [
         """
-class Foo:
-    pass
-
-def func():
-    global Foo
-    return Foo | None
-
 class Node:
     nxt: Node = None
-[func() == (Foo | None), Node.nxt]
+[Node.nxt, list(Node.__annotations__)]
 """,
-        [True, None],
+        [None, ["nxt"]],
+    ],
+    [
+        """
+class Foo:
+    value = 1
+
+def read():
+    return Foo.value
+
+def keep():
+    global Foo
+    Foo = Foo
+
+keep()
+Foo = type("Replacement", (), {"value": 2})
+[Foo.value, read()]
+""",
+        [2, 2],
     ],
     ["Foo = [type('Foo', (), {'x': 100})]; Foo[0].x = 10; Foo[0].x", 10],
     ["Foo = [type('Foo', (), {'x': [100, 101]})]; Foo[0].x[1] = 10; Foo[0].x", [100, 10]],
