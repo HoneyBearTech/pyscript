@@ -38,3 +38,23 @@ Engineer, Security Officer and Auditor. Research is done (above); QA is skipped 
 ## Out of scope
 - Making methods stop seeing nested classes by bare name (a Python difference, but changing it could break scripts).
 - The module name shown when printing a nested type hint (`custom_components.pyscript.eval.Inner` instead of `Outer.Inner`), which is only cosmetic.
+
+---
+
+## Record (2026-11-20)
+
+**Status:** built and checked, with no open problems. Not yet sent upstream.
+
+**What shipped on this branch:** one commit, `store nested classes themselves on the outer class (#875)` (`9306a84`). Just before a class is created, each defined placeholder in a plain-dict class namespace is replaced by the class it holds (+5 lines in `eval.py`), with tests (+211) compared against CPython 3.14. It applies cleanly to upstream `master` (`8131a78`), and all 210 tests, ruff, pylint, mypy and codespell pass.
+
+**Review rounds:**
+- Security: clear.
+- Audit round 1:
+  - **Must-fix:** a guard that swallowed errors could leave a custom class namespace half-updated. Fixed: only plain-dict namespaces are rewritten, and custom ones are left exactly as upstream leaves them.
+  - **Should-fix, accepted:** a method that replaces the nested class with `nonlocal` no longer updates `Outer.Inner`. Real Python refuses this code (SyntaxError), so the code is unchanged and the commit message now promises only that methods *reading* the nested class keep working.
+- Audit round 2: approved. Its one wording fix to the commit message was applied.
+
+**Decisions:**
+- Methods that use the nested class by its bare name keep working (a pyscript-only behaviour), pinned by a test.
+- Cut from upstream `master`; #902 and #906 touch the same function, so whichever merges later gets a small update.
+- Plan check, QA and plain-English check were skipped (job too small; the reviewer's quota was used up).
