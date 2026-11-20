@@ -35,3 +35,17 @@ Engineer, Security Officer and Auditor. Skipped as too small for them: research 
 ## Out of scope
 - A class redefined with a body that raises losing its old value: #902's second commit already fixes that.
 - Any other class-body behaviour.
+
+---
+
+## Record (2026-11-20)
+
+**Status:** built and checked, with no open problems. Not yet sent upstream.
+
+**What shipped on this branch:** one commit, `restore the scope when a class body raises` (`5aa2e0b`). It wraps the class-body loop in `ast_classdef` in `try`/`finally` (+9/−7) and adds two tests (+103) compared against CPython 3.14. It applies cleanly to upstream `master` (`8131a78`), and all 204 tests, ruff, pylint, mypy and codespell pass.
+
+**Checks:** the Security Officer reported it clear, and the Auditor approved with no findings. The audit also confirmed that the scope is restored for `return`/`break` in a class body and for task cancellation. Plan check, QA and plain-English check were skipped (job too small; the reviewer's quota was used up).
+
+**Decisions:**
+- Cut from upstream `master`, not from #902's branch, so the fix can merge on its own. Whichever of the two merges second needs a small update.
+- The class name left bound to an undefined placeholder after a failed body is left alone: #902's second commit handles redefinition, and a first definition already gives NameError, as Python does.
