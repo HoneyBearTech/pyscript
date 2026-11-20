@@ -936,6 +936,7 @@ class AstEval:
         self.config_entry = Function.hass.data.get(DOMAIN, {}).get(CONFIG_ENTRY, {})
         self.dec_eval_depth = 0
         self.class_sym_table: SymTable | None = None
+        self.class_global_names: set[str] = set()
 
     async def ast_not_implemented(self, arg, *args):
         """Raise NotImplementedError exception for unimplemented AST types."""
@@ -1092,7 +1093,7 @@ class AstEval:
         # reuse an existing EvalLocalVar, so functions defined earlier see the new class;
         # it keeps the old class until the new one is set below, as in Python
         #
-        if not isinstance(sym_table_assign.get(arg.name), EvalLocalVar):
+        if not (arg.name in sym_table_assign and isinstance(sym_table_assign[arg.name], EvalLocalVar)):
             sym_table_assign[arg.name] = EvalLocalVar(arg.name)
         if hasattr(metaclass, "__prepare__"):
             sym_table = metaclass.__prepare__(arg.name, tuple(bases), **keywords)
@@ -1101,6 +1102,7 @@ class AstEval:
         self.sym_table_stack.append(self.sym_table)
         self.sym_table = sym_table
         prev_class_sym_table, self.class_sym_table = self.class_sym_table, sym_table
+        prev_class_global_names, self.class_global_names = self.class_global_names, set()
         for arg1 in arg.body:
             val = await self.aeval(arg1)
             if isinstance(val, EvalReturn):
@@ -1108,6 +1110,7 @@ class AstEval:
             if isinstance(val, EvalStopFlow):
                 raise SyntaxError(f"{val.name()} statement outside loop")
         self.class_sym_table = prev_class_sym_table
+        self.class_global_names = prev_class_global_names
         self.sym_table = self.sym_table_stack.pop()
 
         decorators = [await self.aeval(dec) for dec in arg.decorator_list]
@@ -1370,6 +1373,10 @@ class AstEval:
 
     async def ast_global(self, arg):
         """Execute global statement."""
+        if self.sym_table is self.class_sym_table:
+            # a class body's global declarations apply to the class body only
+            self.class_global_names.update(arg.names)
+            return
         if not self.curr_func:
             raise SyntaxError("global statement outside function")
         for var_name in arg.names:
@@ -1440,10 +1447,10 @@ class AstEval:
 
     def binds_global(self, var_name):
         """Return whether var_name is bound in the global symbol table by a global declaration."""
-        # a class body binds in its own namespace, whatever an enclosing function declares
-        return bool(self.curr_func and var_name in self.curr_func.global_names) and (
-            self.sym_table is not self.class_sym_table
-        )
+        if self.sym_table is self.class_sym_table:
+            # a class body binds in its own namespace, whatever an enclosing function declares
+            return var_name in self.class_global_names
+        return bool(self.curr_func and var_name in self.curr_func.global_names)
 
     def assign_name(self, var_name, val):
         """Bind a plain variable name to val, updating an existing EvalLocalVar in place."""
@@ -1452,16 +1459,16 @@ class AstEval:
         # so a later update of this name doesn't change that other binding
         #
         val = unwrap_defined(val)
-        if self.sym_table is self.class_sym_table:
-            # a class body binds plainly in the class namespace (see binds_global)
-            self.sym_table[var_name] = val
-            return
         if self.binds_global(var_name):
             # update a module-level EvalLocalVar in place, so functions defined earlier see it
             if isinstance(self.global_sym_table.get(var_name), EvalLocalVar):
                 self.global_sym_table[var_name].set(val)
             else:
                 self.global_sym_table[var_name] = val
+            return
+        if self.sym_table is self.class_sym_table:
+            # a class body binds plainly in the class namespace (see binds_global)
+            self.sym_table[var_name] = val
             return
         if var_name in self.sym_table and isinstance(self.sym_table[var_name], EvalLocalVar):
             self.sym_table[var_name].set(val)
@@ -1583,9 +1590,12 @@ class AstEval:
             #
             # check other scopes if required by global declarations
             #
-            if self.curr_func and arg.id in self.curr_func.global_names:
-                if self.sym_table is self.class_sym_table and arg.id in self.sym_table:
-                    # a class body finds its own names first
+            in_class = self.sym_table is self.class_sym_table
+            if (in_class and arg.id in self.class_global_names) or (
+                self.curr_func and arg.id in self.curr_func.global_names
+            ):
+                if in_class and arg.id not in self.class_global_names and arg.id in self.sym_table:
+                    # a class body finds its own names first, unless it declares them global
                     val = self.sym_table[arg.id]
                     return val.get() if isinstance(val, EvalLocalVar) else val
                 if arg.id in self.global_sym_table:

@@ -3148,6 +3148,91 @@ result = [f(), g()]
         ],
         [["unbound", 2.0], "unbound"],
     ],
+    [
+        [
+            GLOBAL_BASE_SOURCE
+            + """
+x = 1
+def make():
+    class C:
+        global x, Foo
+        x = 2
+        from mod_global import Foo
+    return C
+C = make()
+import mod_global
+result = [x, hasattr(C, "x"), hasattr(C, "Foo"), read() is mod_global.Foo]
+"""
+        ],
+        [2, False, False, True],
+    ],
+    [
+        [
+            GLOBAL_BASE_SOURCE
+            + """
+x = 1
+class C:
+    global x, Foo
+    x = 2
+    from math import pi as Foo
+    y = x + 1
+result = [x, hasattr(C, "x"), C.y, hasattr(C, "Foo"), isinstance(read(), float)]
+"""
+        ],
+        [2, False, 3, False, True],
+    ],
+    [
+        [
+            """
+x = 1
+def f():
+    class C:
+        global x
+        x = 2
+    x = 5
+    return x
+def g():
+    global x
+    class C:
+        x = 3
+    return C.x
+result = [f(), x, g(), x]
+"""
+        ],
+        [5, 2, 3, 2],
+    ],
+    [
+        [
+            """
+def pyscript_compile(func):
+    return func
+@pyscript_compile
+def make_meta():
+    class Namespace:
+        def __init__(self):
+            self.values = {}
+        def __getitem__(self, name):
+            return self.values[name]
+        def __setitem__(self, name, value):
+            self.values[name] = value
+        def __contains__(self, name):
+            return name in self.values
+    class Meta(type):
+        @classmethod
+        def __prepare__(mcs, name, bases):
+            return Namespace()
+        def __new__(mcs, name, bases, namespace):
+            return type.__new__(mcs, name, bases, dict(namespace.values))
+    return Meta
+class C(metaclass=make_meta()):
+    class D:
+        x = 3
+    y = D.x
+result = [C.D.x, C.y]
+"""
+        ],
+        [3, 3],
+    ],
 ]
 
 
