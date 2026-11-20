@@ -45,3 +45,33 @@ Engineer (code and tests), QA (tests and plan check), Security Officer (leaks an
 - A lambda or `@pyscript_compile` function reading a module-level class that is later rebound.
 - `global Zed; del Zed` on a name that was never defined doesn't raise `NameError`.
 - No change to the existing #902 commit.
+
+---
+
+## Record (2026-11-20)
+
+**Status:** built and checked; two open problems from the final review (below). Not yet pushed to #902.
+
+**What shipped on this branch:** one commit, `update module-level names in place when assigned or deleted through global (#875)`. It changes `eval.py` (+98/−22) and adds tests (+740). It applies cleanly on its own onto #902's commit, and all 204 tests, ruff, pylint, mypy and codespell pass on Python 3.14.
+
+**Decisions:**
+- Add the `global` fix to #902 instead of a separate PR (Sean, on this PR).
+- A read through `global` leaves an undefined wrapper wrapped, as in the maintainer's sketch, so a class defined through `global` can still name itself in its type hints. Rejected: raising NameError there, which broke code that works today.
+- Unwrap on every binding (assignment, imports) and on module attribute reads, so no binding shares another module's wrapper. Rejected: an "owner" field on the wrapper (bigger change, and it left existing leaks).
+- Class bodies bind in the class namespace, even inside a function that declares the name `global`.
+- Imports inside a function are local to it, as in Python.
+
+**Review rounds:**
+- Round 1: the audit found two must-fix regressions: aliases through `mod.Foo` still shared the wrapper, and imports inside a function broke closures. Both fixed.
+- Round 2: the audit found class-body import and alias problems and a wrong exception type. All fixed.
+
+**Open (final review):**
+1. `global x` written inside a class body is ignored. A regression for assignment; for imports, upstream has the same bug already.
+2. A class nested in a class whose metaclass `__prepare__` returns a mapping without `.get()` fails. A one-line fix.
+
+**Rejected or deferred findings:**
+- `global Zed; del Zed` on a never-defined name doesn't raise. Unchanged from upstream, listed as a known limit.
+- `hasattr(mod, "Foo")` after mod deletes `Foo` returns True. Same family as the listed `getattr(mod, ...)` limit.
+- Star import inside a function is accepted. Unchanged from upstream.
+- A class body that raises doesn't restore pyscript's scope stack. Unchanged from upstream; worth its own small PR.
+- Plan check and plain-English check were skipped (the reviewer's monthly quota was used up).
