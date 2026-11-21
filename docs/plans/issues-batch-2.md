@@ -65,3 +65,31 @@ After that, QA, the Security Officer and the Auditor review the work. Research i
 - **#564, generator expressions** (for example `sum(x for x in y)`). A 4-line version works, but it builds the whole list first. So `any(...)` doesn't stop early, and an endless generator would freeze Home Assistant. The maintainer called a full version "quite hard". This is a feature that needs his buy-in, not a bug fix.
 - Issues that need the maintainer's design: #891, #877 and #885, #831, #788 (stubs for `service.call`), and #855 (Jupyter listen address).
 - Commenting on the issues that are already fixed on `master`. This stays on the roadmap, if you want it.
+
+---
+
+## Record (2026-11-21)
+
+**Status:** built and checked, with no open problems. Not yet sent upstream.
+
+**What shipped on this branch:** five commits, each one meant to become its own upstream PR. Each one applies on its own to upstream `master` (`309a3ff`) and passes the tests there.
+- `181956e` keep a decorator's wrapper body when it uses functools.wraps (#808): `eval.py` +42/−15, 6 new test cases.
+- `75137bc` delete object attributes in del instead of treating them as states: `eval.py` +16/−4, 5 new test cases.
+- `d16e990` document the logger names for scripts, apps and modules (#821, #520, #265): docs only.
+- `cf83267` document that state triggers only fire when a value changes (#864): docs only.
+- `c53ef6c` fix relative imports inside an app's subfolders (#726): `global_ctx.py` +4/−1, 1 new test.
+
+**Checks:** all 207 tests, ruff, pylint, mypy, codespell and a strict Sphinx docs build pass on Python 3.14. hassfest only runs on GitHub. The new tests fail on upstream's code without the fixes, and every new case matches real Python.
+
+**Review rounds:**
+- QA: passed.
+- Security: clear.
+- Audit:
+  - **Must-fix, fixed:** the #726 package check compared the end of the file path with `/__init__.py`. On Windows that would treat an app's `__init__.py` as a plain module. It now uses `os.path.basename`. The fix was checked by rerunning the tests, ruff, mypy and pylint.
+  - **Should-fix, not changed:** after `del mod.Foo` (a class defined in another pyscript module), `hasattr(mod, "Foo")` stays True. The class is kept as an empty placeholder so that the module's own functions see it as deleted, and pyscript already does the same for a module-level `del Foo`. This is a rare case and is a known limit.
+
+**Decisions:**
+- The #808 fix keeps the function object a decorator returns, and doesn't unwrap it as the first version did. A decorator that stores the function (a registry) keeps a working one, and attributes like `__wrapped__` survive. `remove_func()` had no other users, so it was removed.
+- #726 needed a second small change beyond the first idea. A plain module's relative imports now start from its package, not from itself, which removes the phantom contexts. Scripts that use the old workaround (`from .subfolder.a` inside `subfolder/b.py`) must switch to `from .a`. The PR text says so.
+- Unchanged: relative imports from a plain file inside a `modules/` package still aren't supported, as before.
+- The plan check and the plain-English check were skipped: their reviewer's monthly quota is used up.
