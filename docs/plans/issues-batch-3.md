@@ -63,3 +63,39 @@ Three Engineers in parallel, one per item, each on their own branch. Then QA, th
 - #635 and #436 (services missing at startup and shutdown): this code is being rewritten in the maintainer's open PR #899, so we're waiting for that.
 - #855 (the Jupyter kernel listens on all network addresses): a small fix, but it's security-related and of lower value. It can be its own job if you want it.
 - #877 and #885 (restoring saved states): still need a design decision from the maintainer.
+
+---
+
+## Record (2026-11-21)
+
+**Status:** built and checked, with no open problems. Not yet sent upstream.
+
+**What shipped:** three commits, each one meant to become its own upstream PR. Each standalone version applies on its own to upstream `master` (`c20990b`) and passes the tests there. This branch holds all three stacked; item 3 is rebased on item 1 here because both change `call_func`.
+- Item 1, `f7d1764` inherit __init__ and support super() in pyscript classes (#891): `eval.py` +122/−12, docs +15, tests +435.
+- Item 2, `35ec314` support generator expressions, evaluating each element lazily (#564): `eval.py` +98, docs +17/−3, tests +228. It is `8299ab6` on this branch.
+- Item 3, `3abffe9` support @property and @classmethod on pyscript class methods: `eval.py` +51/−2, docs +7/−2, tests +58. It is `6e0d9fc` on this branch.
+
+**Checks:**
+- All 214 tests, ruff, pylint, mypy, codespell and a strict docs build pass on Python 3.14 on the combined branch. Each standalone commit also passes on `c20990b`.
+- The new tests fail on upstream's code without the fixes. Every case is compared with real Python.
+
+**Review rounds:**
+- QA: passed. About 35 extra edge cases matched real Python, including existing class patterns inside trigger and service functions.
+- Security: clear.
+- Audit round 1 (five findings):
+  - **Must-fix, fixed:** a `@staticmethod __init__` broke (item 1).
+  - **Must-fix, fixed:** properties skipped a class's own `__getattribute__`/`__setattr__` (item 3).
+  - **Should-fix, fixed:** an `__init__` set on an instance was ignored (item 1).
+  - **Should-fix, fixed:** a getter's `AttributeError` didn't fall back to `__getattr__` (item 3).
+  - **Not changed (must-fix, rejected):** the generator expression scope differences. pyscript's list comprehensions on `c20990b` give the same results, so they're existing behaviour. They're now documented as known limits.
+- Audit round 2 (two findings in item 3):
+  - **Must-fix, fixed:** `property` subclasses with their own `__get__`/`__set__` were bypassed.
+  - **Should-fix, fixed:** a static or class `__getattr__` was called with the wrong arguments.
+- Final audit check: approved.
+
+**Decisions:**
+- Item 1 creates objects like Python's `type.__call__`. That covers every case that made us hold #891 back in batch 1, and each of them is pinned by a test.
+- Item 2 runs each element right away, without waiting. An element that has to wait raises a clear error that suggests a list comprehension.
+- Item 3 only handles exact `property` objects on classes that don't customise attribute access. Everything else is left to Python as before.
+- QA's check ran before the fix rounds. Those fixes were checked by the audit rounds and by rerunning the full suite.
+- The plan check and the plain-English check were skipped: their reviewer's monthly quota is used up.
