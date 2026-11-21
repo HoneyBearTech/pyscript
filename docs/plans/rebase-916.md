@@ -37,3 +37,32 @@ Engineer, Security Officer and Auditor. This is a small job: research and QA are
 ## Out of scope
 - Any change to #916 beyond the rebase and anything step 2 forces.
 - #918, which stays as it is until #916 merges, as Sean decided.
+
+---
+
+## Record (2026-11-21)
+
+**Status:** built and checked, with nothing open. Not yet sent to #916.
+
+**What's ready:** `team/rebase-916-891`, one commit `32c18f1` on upstream master `06f8eba`. While we worked, master moved twice: to `13af32c` (#917, #912), then to `06f8eba` (#910). The plan's "upstream moves" step covered both.
+- `tests/test_unit_eval.py`: upstream's tests are unchanged, including those from #917 and #910, and #916's come after them.
+- **One fix that exists only because #916 and #917 are both in:** inside a generator expression's element, a zero-argument `super()` used the method's `self`. Python uses the generator's own first argument, its outermost iterator, so pyscript could silently call a parent method on the wrong object.
+  - Now it matches Python: `genexp_iter` is set in `ast_generatorexp`, saved and cleared around function calls, and used by `super_args`.
+  - Two new scripts in #916's CPython-compared test cover an element, a condition, the outermost iterable, nested generator expressions and a plain function.
+- Apart from that fix, the code and docs are the same as `ae58351`.
+
+**Checks (Python 3.14, shared test setup):**
+- The full suite has 222 tests, and all pass. The pre-commit checks and the docs build pass.
+- Comparisons with Python matched for `super()` and `Base.__init__` inside generator expressions, generator expressions in `__init__` and class bodies, classes created in elements, and #910's wrapped methods and `__init__` with `super()`.
+
+**Review rounds:**
+- Security: clear.
+- Audit round 1: one must-fix (the `super()` case above). It was fixed by the Engineer.
+- Audit round 2: approved.
+
+**Pre-existing, left alone:**
+- A class body's own generator expression using `super()` gives `RuntimeError` where Python gives `TypeError`. That's rare, and it was the same before this job.
+- `lambda: C(10)` with a pyscript class that has an `__init__` fails. It does on plain master too, and it's noted for a later batch.
+- A generator expression element that waits still raises #917's clear error.
+
+**Skipped:** research and QA (the Engineer and the Auditor ran the full suite), and the plan check (small job).
