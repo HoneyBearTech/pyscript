@@ -31,3 +31,20 @@ Engineer, Security Officer and Auditor. Research and the plan check are skipped:
 ## Out of scope
 - Any change to how the fix works.
 - Making methods stop seeing nested classes by bare name (a Python difference, but changing it could break scripts).
+
+---
+
+## Record (2026-11-21)
+
+**Status:** built and checked, with nothing open. Not yet sent to #907.
+
+**What shipped on this branch:** one commit, `store nested classes themselves on the outer class (#875)` (`0e28002`): #907's fix rebased onto upstream `master` (`c20990b`, after #906, #908 and #909). The `eval.py` change is the same as in #907. In `tests/test_unit_eval.py` all upstream tests are kept unchanged and ours follow them. The docstring of `test_nested_class_bare_name_in_method` now says it pins current pyscript behaviour that differs from Python (a known limit listed in #902). All 217 tests, ruff (check and format), pylint, mypy and codespell pass on Python 3.14. Without the `eval.py` change, the five comparison cases fail.
+
+**Review rounds:**
+- Security: clear. It noted that this plan file must not go upstream; only the fix commit does.
+- Audit: approved, no findings. It also checked four more cases against Python (bound methods of temporary and saved instances, a failed nested-class redefinition, a class inside a function that declares globals).
+
+**Decisions:**
+- Resolved the conflict by keeping both sets of appended tests; no other change.
+- For #907, the fix commit is copied onto upstream `master` on its own (without this plan commit) and replaces the old commit on `fix-nested-class-attr`.
+- Research, plan check and QA were skipped as too small for this job.
