@@ -43,3 +43,31 @@ Skipped, because the job is small: research, QA and the plan check. The Engineer
 ## Out of scope
 - #918: it waits until #916 merges, as you decided.
 - The next batch's work (PR #12).
+
+---
+
+## Record (2026-11-21)
+
+**Status:** built and checked, with nothing open. Not yet pushed to #916.
+
+**What's ready:** `team/review-916-tests-891`, one new commit `2ec55b8` on top of #916's `32c18f1`. It only changes `tests/test_unit_eval.py`, adding 61 lines. It still merges cleanly with upstream master `08f10e5`.
+1. **A script for methods that use `super()`, called from generator expressions:**
+   - with zero-argument `super()` and with `super(C, self)`;
+   - from an element, from a condition and from a nested generator expression;
+   - and from an inherited method.
+2. **A script for a `__new__` that returns an object of another pyscript class:**
+   - one with its own `__init__`;
+   - one that only inherits its `__init__`;
+   - a function that returns a tuple;
+   - a `__new__` that returns an object of its own subclass.
+
+   It counts every `__init__` call.
+
+Both scripts give the same results in pyscript as in real Python. No pyscript code needed to change.
+
+**Checks (Python 3.14, the team's shared test setup):**
+- **Suite:** the full suite has 222 tests, and all pass. The pre-commit checks and the docs build pass too.
+- **Proof the new tests matter:** removing the `genexp_iter` reset in `EvalFunc.call` makes script 1 fail. Removing the check after `__new__` makes script 2 fail. The Engineer and the Auditor each checked this separately.
+- **Reviews:** security is clear, and the audit approved on its first round.
+
+**Skipped:** research, QA and the plan check, because the job is small.
