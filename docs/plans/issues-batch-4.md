@@ -118,7 +118,7 @@ The lambda and `StopIteration` branches both change `eval.py`, its tests and `do
 | Step | Branch | Commit | Upstream branch name |
 |---|---|---|---|
 | 1. #725 lambdas | `team/issues-batch-4-lambda` | `96d1324` | `fix-lambda-closure-725` |
-| 2. `StopIteration` | `team/issues-batch-4-stopiteration` | `3372755` | `fix-stopiteration` |
+| 2. `StopIteration` | `team/issues-batch-4-stopiteration` | `80b2f7e` | `fix-stopiteration` |
 | 3. #617 trigger blanks | `team/issues-batch-4-trigger-ws` | `98f0544` | `fix-trigger-expr-whitespace-617` |
 | 4. #433 docs | `team/issues-batch-4-attr-docs` | `29d933d` | `docs-attribute-old-value-433` |
 
@@ -128,7 +128,7 @@ The lambda and `StopIteration` branches both change `eval.py`, its tests and `do
 
 **Checks (Python 3.14, shared test setup):**
 - Every branch passes the full suite, pre-commit and `sphinx-build -W`.
-- Lambda, trigger and docs merged together pass 249 tests. `StopIteration`, trigger and lambda merged together pass 248. Lambda plus `StopIteration` passes 225. All are temporary merges.
+- Lambda, trigger and docs merged together on today's master (which includes #911's new tests) pass 249 tests. `StopIteration`, trigger and lambda merged together pass 248. Lambda plus `StopIteration` passes 225. All are temporary merges.
 - **Lambdas:** 63 scripts compared with Python (45 for lambdas and 18 for comprehensions, some run twice). No case that matches Python on master fails on the branch. That was checked across 197 comparisons.
 - **`StopIteration`:** 48 scripts compared with Python. Master gets 37 of them wrong. `try` blocks run within a few percent of master's speed.
 - **Trigger blanks:** tests for the current and legacy decorators and for `task.wait_until`. 399 expression pairs give the same parse as before.
@@ -146,7 +146,7 @@ The lambda and `StopIteration` branches both change `eval.py`, its tests and `do
 - **Lambdas:** in a nested function, a lambda that contains `__debug__` and also binds a name with `:=` or in a comprehension makes the enclosing function pick up an outer variable of that name. You can only see it through `eval()` or `locals()`.
 - **`StopIteration`:** if a `with` block's `__exit__` returns an object whose `__bool__` raises `StopIteration`, the result is a `RuntimeError` instead of a `StopIteration`.
 
-Both are listed in their PR descriptions.
+Both are listed in their PR descriptions. The `StopIteration` one, and a pyscript `async def` awaited through a native task, are also in the docs' Language Limitations, as the plan required.
 
 **Found, not fixed (already on master):**
 - With the current decorators, `task.wait_until` returns at once when its expressions name no state variable.
