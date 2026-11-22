@@ -51,3 +51,32 @@ CEO, Engineer, QA, Security Officer, Auditor, plan review, plain-English check. 
 ## Out of scope
 - The maintainer's suggested follow-up: the new comprehension scoping in every function.
 - Updating #920.
+
+## Record
+**2026-11-22. Built and checked.** The finished change is `team/review-919-pr`, two signed-off commits on master `a7a9541`:
+- `8355e0e`, "let lambdas use the enclosing function's variables (#725)": #919's commit `cddf148` reapplied, with its changes and message unchanged. The only clash was at the end of `tests/test_unit_eval.py`. Both sets of tests are kept, each with its own test function.
+- `30defb9`, "remove LoopScope.keep_writes(), which nothing needs".
+
+After Gate B, it replaces `fix-lambda-closure-725` on the fork with a guarded push, from `cddf148`.
+
+**What we found about `keep_writes()`:** nothing needs it, so the plan's "remove" branch was taken.
+- In a function that shares its variables, every name the function binds already has its binding when the function is called. That includes `:=` targets and comprehension loop names.
+- Assignment and `del` only change the value inside that binding.
+- Nested comprehensions and generator expressions always put back the bindings they replace.
+- The Engineer ran 21 cases three ways: in Python, in pyscript as it is, and in pyscript without `keep_writes()`. They were run in functions with an inner function and, where the case allows it, without one. No case changed when it was removed.
+- With `keep_writes()` made to fail whenever it changes anything, the full suite still passed (231 tests). The CEO and the Auditor each confirmed this separately. The Auditor also ran 155 more cases, with no difference.
+- The 15 cases that match Python are now `GENEXP_WALRUS_SCOPE_TESTS`, run by `test_genexp_walrus_scopes_match_python`. They pass with and without `keep_writes()`.
+
+**Existing differences, left for the maintainer's suggested follow-up:** in a function without an inner function or lambda, a generator expression run by a comprehension that reuses a name sees the comprehension's loop variable, and a `:=` to that name is lost. All but the `global` case differ from Python, with or without `keep_writes()`. The reply gives five examples.
+
+**Checks:**
+- 232 tests, pre-commit and the docs build with warnings treated as errors all pass on Python 3.14, and the branch merges into master with no clashes.
+- 94 scripts are compared with Python: 50 lambda scripts, 29 comprehension-scope scripts and 15 new ones.
+- **Plan review:** it found an existing difference in functions without an inner lambda, and said "no value yet" doesn't mean a binding is created. Both were folded into the plan before Gate A.
+- **QA:** pass, with two notes. One claim, the suite run with the failing check, was confirmed by the CEO. The other, plain-function cases not being committed tests, is now stated in the drafts.
+- **Security:** clear.
+- **Audit:** approve. It found two wording fixes in the drafts:
+  - the 15 scripts are 14 `:=` scripts plus 1 `nonlocal` script;
+  - the old `default_value()` example needs an inner function to show the old failure.
+
+  Both were fixed in one round, with no code change.
