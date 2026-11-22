@@ -76,3 +76,34 @@ CEO, Engineer, QA, Security Officer, Auditor, plan review, plain-English check. 
 
 ## Out of scope
 - #920's rework, which is a separate job and is running now.
+
+## Record
+**2026-11-22. Built and checked.** The finished change is `team/review-921b-pr`: `1e39bf5`, unchanged, plus one new signed-off commit, `ccd248a`, "let multi-line trigger expressions span lines without brackets (#617)". It replaces `9fe371a`. After Gate B it goes on the fork's `fix-trigger-expr-whitespace-617` with a guarded push from `9fe371a`.
+
+**What shipped**
+- `AstEval.parse_trigger_expr()` strips the expression first.
+  - **One line:** it's parsed exactly as in `1e39bf5`.
+  - **Still has a line break:** it's parsed as `"(" + expr + "\n)"` without stripping. Its lines are split the way Python counts them and joined with `\n`. Positions on line 1 move one place left. `_trigger_syntax_error()` moves syntax errors, and an error at the added `)` goes to the end of the last non-blank line.
+- **The rejection check.** After parsing, a bare generator, a bare tuple, a comment-only expression or an early close gives a clear `SyntaxError`: Python reports these as starting at the added `(`. So does a bare `:=`, `yield` or `yield from`, which a second parse as a keyword value catches. Before rejecting anything, the code tries `1e39bf5`'s parse of the stripped text, so nothing that parsed before is rejected.
+- **State-trigger callers** use a stripped copy only to recognise a bare state name. With several entries, `any_trigger_exprs()` strips each one.
+- **Docs:** the note in the `@state_trigger` section is rewritten.
+- **Size:** `eval.py`, `trigger.py` and `decorators/` add 108 lines and remove 24, against 170 and 59 for `9fe371a`.
+
+**Checks:** 324 tests, pre-commit and the docs build with warnings treated as errors all pass on Python 3.14. With master merged in, 328 pass. A fuzz test tries 20,000 inputs with seed 617: all 1,021 that parse on `1e39bf5` still parse to the same tree, 343 of them multi-line.
+- **Plan review:** it found three problems, all folded in before Gate A:
+  - the node-type check would reject `(x := 1)`;
+  - bare tuples already parse on one line;
+  - the callers stripped the text before the parser saw it.
+- **QA:** pass. One wording fix: `any_trigger_exprs()` didn't strip in `1e39bf5`.
+- **Security:** clear. About 45 odd inputs, including 600 KB texts and deep nesting, all parse or give a clean `SyntaxError`.
+- **Audit:** the first round asked for changes:
+  - **must-fix:** multi-line tuples that `1e39bf5` accepts were being rejected;
+  - **should-fix:** a final lone carriage return hid the added `)`;
+  - **should-fix:** a log test hard-coded positions Python chooses.
+
+  All three were fixed in one round, and the re-check approved: 100,000 more inputs and 912 targeted cases, with no difference.
+- **Before Gate B:** the team fetched #921's comments again. Nothing new.
+
+**Known limits, not changed**
+- An unclosed bracket in a multi-line expression is reported at the start of the first line, not at the user's bracket.
+- The existing Unicode caret offset in logged syntax errors is unchanged.
