@@ -67,3 +67,42 @@ CEO, Engineer, QA, Security Officer, Auditor, plan review, plain-English check. 
 ## Out of scope
 - `functools.cached_property`, and pyscript getters on `property` subclasses. They stay listed as limits.
 - Updating #919 and #920 for #918. That's the next job.
+
+---
+
+## Record (2026-11-22)
+
+**Status:** built and checked. Nothing open, and nothing sent upstream yet.
+
+**What's ready:** `team/super-prop-pr`, commit `84127b8` "support super().prop for pyscript properties". It's one signed-off commit on upstream master `5820c4f`. After approval it goes to the fork as `support-super-property`.
+
+**What changed:**
+- `super_property()` in `eval.py` finds the attribute the way Python's `super` does. It reads the `super` object's fields and each class's MRO and dictionary through the built-in descriptors.
+- `ast_attribute` awaits a plain property's pyscript getter, reached through an exact `super` object, with the `super` object's own `__self__`.
+- The docs' Language Limitations now say `super().prop` works.
+- `test_super_property_match_python` compares 28 scripts with CPython. Run one per process, 10 of them fail on master and 18 pass. All 28 pass on the branch.
+
+**Checks:**
+- Full suite: 229 passed.
+- pre-commit: passes, with no files left modified.
+- `sphinx-build -W`: passes.
+- Speed: one type check on other attribute loads, about 17 ns, which is within noise.
+- QA: passed.
+- Security: clear.
+- Audit: approved in round 3, after two fix rounds:
+  1. Round 1 found that parent class attributes named `__self__`, `__self_class__` or `__thisclass__` could hide the `super` object's own fields, which also gave the wrong instance. It also found that a metaclass could intercept the `__mro__` and `__dict__` reads.
+  2. Round 2 found that the getter check read a native getter's `__class__`.
+  Both rounds were fixed, with regression scripts.
+
+**Rejected finding:** QA counted 11 of the then 21 scripts failing on master, not 9. The Auditor and the Engineer each ran every script in its own process, and only 9 failed. QA's 2 extra failures were "never awaited" warnings left over from earlier scripts in the same run.
+
+**Deviations from the plan:** none. The two fix rounds added 7 compatibility scripts.
+
+**Already on master, not fixed here:**
+- Reading `obj.prop` through a plain instance, with a native getter whose `__getattribute__` blocks `__class__`, fails, because #918's check uses `isinstance()`. The description's Note lists it.
+- A pyscript `__class__` property is read by `isinstance()` inside pyscript.
+- After `__thisclass__` leaves the MRO, `s.__init__()` raises `ValueError`, where Python raises `RuntimeError` (#916's `init_attr`).
+
+**Skipped:**
+- the Researcher, because the maintainer's comment gave the facts;
+- the second security review, because nothing security-related changed.
