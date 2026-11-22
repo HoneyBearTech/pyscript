@@ -3,6 +3,7 @@
 from ast import literal_eval
 import asyncio
 from datetime import datetime as dt
+from types import SimpleNamespace
 from unittest.mock import mock_open, patch
 
 import pytest
@@ -524,8 +525,28 @@ def func7():
     )
 
 
-TRIGGER_WHITESPACE_SOURCE = r"""
-seq_num = 0
+# the example in #617, as written there (its lines end in "and "), as a single trigger and as one of several
+ISSUE_617_SOURCE = (
+    "_state_sensor = 'sensor.office_state'\n"
+    "\n"
+    '@state_trigger(f"""\n'
+    "{_state_sensor} in ['recently occupied', 'unoccupied', 'dormant', 'unavailable'] and \n"
+    "(sensor.octoprint_actual_tool0_temp == 'unavailable' or float(sensor.octoprint_actual_tool0_temp) <= 110) and \n"
+    "(sensor.octoprint_actual_bed_temp == 'unavailable' or float(sensor.octoprint_actual_bed_temp) <= 110)\n"
+    '""", state_hold_false=0)\n'
+    "def should_turn_off():\n"
+    "    pyscript.done = '617 single'\n"
+    "\n"
+    '@state_trigger("pyscript.never == \'1\'", f"""\n'
+    "{_state_sensor}2 in ['recently occupied', 'unoccupied', 'dormant', 'unavailable'] and \n"
+    "(sensor.printer2_tool0_temp == 'unavailable' or float(sensor.printer2_tool0_temp) <= 110) and \n"
+    "(sensor.printer2_bed_temp == 'unavailable' or float(sensor.printer2_bed_temp) <= 110)\n"
+    '""", state_hold_false=0)\n'
+    "def should_turn_off_2():\n"
+    "    pyscript.done = '617 several'\n"
+)
+
+TRIGGER_EXPR_SOURCE = r"""
 
 @time_trigger("startup")
 def func_startup():
@@ -544,52 +565,98 @@ def func_tab(value=None):
     pyscript.done = "tab"
 
 @state_trigger('''
-    (pyscript.d == '1' and
-     pyscript.e == '1')
+    pyscript.d == '1' and
+    pyscript.e == '1'
 ''')
 def func_multiline(value=None):
     pyscript.done = "multiline"
+
+@state_trigger('''
+    pyscript.m1 == '1' and  # first condition
+    pyscript.m2 == '1'  # last condition
+''')
+def func_comments():
+    pyscript.done = "comments"
 
 @state_trigger("  pyscript.f  ", "\n pyscript.g == '1'")
 def func_any(var_name=None):
     pyscript.done = var_name
 
+
+@state_trigger("pyscript.k == '1' \\")
+def func_backslash():
+    pyscript.done = "backslash"
+
+@state_trigger("k := pyscript.walrus == '1'")
+def func_walrus():
+    pyscript.done = "walrus"
+
+# a bare tuple is one element of the any([...]), and a tuple is always true
+@state_trigger("pyscript.t1 == 'no', pyscript.t1 == 'nope'", "pyscript.t2 == '1'")
+def func_tuple(var_name=None):
+    pyscript.done = f"tuple {var_name}"
+
 @state_trigger(" pyscript.h == '1'")
-@state_active("\n pyscript.active == '1'\n")
+@state_active('''
+    pyscript.active == '1' and
+    pyscript.active2 == '1'
+''')
 def func_active():
     pyscript.done = "active"
 
-@event_trigger("test_event", "\n arg1 == 1 \n")
-def func_event(arg1=None):
+@event_trigger("test_event", "\n arg1 == 1 and\n arg2 == 2 \n")
+def func_event(arg1=None, arg2=None):
     pyscript.done = "event"
+
+@mqtt_trigger("test/topic", "\n payload == 'on' and  # the payload\n topic == 'test/topic'\n")
+def func_mqtt():
+    pyscript.done = "mqtt"
 
 @state_trigger("pyscript.w1 == '1'")
 def func_wait():
-    task.wait_until(state_trigger=" pyscript.w2 == 'go'\n", state_check_now=False)
+    task.wait_until(state_trigger=" pyscript.w2 == 'go' and\n pyscript.w2b == 'go'  # both\n", state_check_now=False)
     pyscript.done = "waited state"
 
 @state_trigger("pyscript.w3 == '1'")
 def func_wait_event():
-    task.wait_until(event_trigger=["test_wait", "\t arg1 == 2 "])
+    task.wait_until(event_trigger=["test_wait", "\t arg1 == 2 and\n arg2 == 3 "])
     pyscript.done = "waited event"
+
+@state_trigger("pyscript.w4 == '1'")
+def func_wait_mqtt():
+    task.wait_until(mqtt_trigger=["test/wait", "\n payload == 'go' or\n payload == 'went'\n"])
+    pyscript.done = "waited mqtt"
 
 @state_trigger("pyscript.s == '1'")
 def func_syntax():
-    try:
-        task.wait_until(state_trigger="\n  a b \n")
-    except SyntaxError as exc:
-        pyscript.done = f"syntax: {exc.msg} {exc.text} {exc.offset}"
+    for expr in [" a b", "\n  a b \n", "\n  x == 1 and\n", "  # nothing", "a) or (b"]:
+        try:
+            task.wait_until(state_trigger=expr)
+        except SyntaxError as exc:
+            pyscript.done = [exc.msg, exc.lineno, exc.offset, exc.end_lineno, exc.end_offset, exc.text]
 """
 
 
 @pytest.mark.asyncio
 @pytest.mark.parametrize("legacy", [False, True], ids=["decorators", "legacy_decorators"])
 async def test_trigger_expression_whitespace(hass, caplog, monkeypatch, legacy):
-    """Trigger expressions may start and end with spaces, tabs and new lines."""
+    """Trigger expressions may start and end with blanks and run over several lines without brackets."""
     if legacy:
         monkeypatch.setenv("NODM", "1")
+    mqtt_handlers = {}
+
+    async def mqtt_subscribe(_hass, topic, handler, **_kwargs):
+        mqtt_handlers[topic] = handler
+        return lambda: None
+
+    async def mqtt_message(topic, payload):
+        await mqtt_handlers[topic](SimpleNamespace(topic=topic, payload=payload, qos=0, retain=False))
+
+    monkeypatch.setattr("homeassistant.components.mqtt.async_subscribe", mqtt_subscribe)
     notify_q = asyncio.Queue(0)
-    await setup_script(hass, notify_q, [dt(2020, 7, 1, 10, 59, 59, 999999)], TRIGGER_WHITESPACE_SOURCE)
+    await setup_script(
+        hass, notify_q, [dt(2020, 7, 1, 10, 59, 59, 999999)], ISSUE_617_SOURCE + TRIGGER_EXPR_SOURCE
+    )
     assert ("Using legacy decorators" in caplog.text) == legacy
 
     hass.bus.async_fire(EVENT_HOMEASSISTANT_STARTED)
@@ -598,6 +665,10 @@ async def test_trigger_expression_whitespace(hass, caplog, monkeypatch, legacy):
     async def check(expected):
         assert await wait_until_done(notify_q) == expected
 
+    async def check_none():
+        await hass.async_block_till_done()
+        assert notify_q.empty()
+
     hass.states.async_set("pyscript.a", "1")
     await check("space")
     hass.states.async_set("pyscript.b", "1")
@@ -605,93 +676,97 @@ async def test_trigger_expression_whitespace(hass, caplog, monkeypatch, legacy):
     hass.states.async_set("pyscript.c", "1")
     await check("tab")
     hass.states.async_set("pyscript.d", "1")
+    await check_none()
     hass.states.async_set("pyscript.e", "1")
     await check("multiline")
+    hass.states.async_set("pyscript.m1", "1")
+    await check_none()
+    hass.states.async_set("pyscript.m2", "1")
+    await check("comments")
 
-    # the entity name is trimmed too, so it still means "any change" and the name is exact
+    # a state name with blanks around it means "any change", and the name is exact
     hass.states.async_set("pyscript.f", "x")
     await check("pyscript.f")
     hass.states.async_set("pyscript.g", "1")
     await check("pyscript.g")
 
+    # #617: false first (state_hold_false=0), then true when the last state changes
+    for suffix, temps, expected in (
+        ("", "octoprint_actual", "617 single"),
+        ("2", "printer2", "617 several"),
+    ):
+        hass.states.async_set(f"sensor.office_state{suffix}", "occupied")
+        hass.states.async_set(f"sensor.{temps}_tool0_temp", "100")
+        hass.states.async_set(f"sensor.{temps}_bed_temp", "120")
+        await check_none()
+        hass.states.async_set(f"sensor.office_state{suffix}", "unoccupied")
+        await check_none()
+        hass.states.async_set(f"sensor.{temps}_bed_temp", "100")
+        await check(expected)
+
+    hass.states.async_set("pyscript.k", "1")
+    await check("backslash")
+    hass.states.async_set("pyscript.walrus", "1")
+    await check("walrus")
+    hass.states.async_set("pyscript.t1", "x")
+    await check("tuple pyscript.t1")
+
     hass.states.async_set("pyscript.h", "1")
-    await hass.async_block_till_done()
-    assert notify_q.empty()
+    await check_none()
     hass.states.async_set("pyscript.active", "1")
+    hass.states.async_set("pyscript.active2", "1")
     hass.states.async_set("pyscript.h", "0")
     hass.states.async_set("pyscript.h", "1")
     await check("active")
 
-    hass.bus.async_fire("test_event", {"arg1": 0})
-    await hass.async_block_till_done()
-    assert notify_q.empty()
-    hass.bus.async_fire("test_event", {"arg1": 1})
+    hass.bus.async_fire("test_event", {"arg1": 1, "arg2": 0})
+    await check_none()
+    hass.bus.async_fire("test_event", {"arg1": 1, "arg2": 2})
     await check("event")
 
-    # task.wait_until: keep poking the state until the function is waiting
-    hass.states.async_set("pyscript.w1", "1")
-    for i in range(100):
-        if not notify_q.empty():
-            break
+    await mqtt_message("test/topic", "off")
+    await check_none()
+    await mqtt_message("test/topic", "on")
+    await check("mqtt")
+
+    # task.wait_until: keep poking until the function is waiting
+    async def poke_until_done(start, poke, expected):
+        hass.states.async_set(start, "1")
+        for i in range(100):
+            if not notify_q.empty():
+                break
+            await poke(i)
+            await asyncio.sleep(0.02)
+        await check(expected)
+
+    async def poke_state(i):
+        hass.states.async_set("pyscript.w2b", "go")
         hass.states.async_set("pyscript.w2", f"stop{i}")
         hass.states.async_set("pyscript.w2", "go")
-        await asyncio.sleep(0.02)
-    await check("waited state")
 
-    hass.states.async_set("pyscript.w3", "1")
-    for _ in range(100):
-        if not notify_q.empty():
-            break
-        hass.bus.async_fire("test_wait", {"arg1": 1})
-        hass.bus.async_fire("test_wait", {"arg1": 2})
-        await asyncio.sleep(0.02)
-    await check("waited event")
+    async def poke_event(_i):
+        hass.bus.async_fire("test_wait", {"arg1": 2, "arg2": 0})
+        hass.bus.async_fire("test_wait", {"arg1": 2, "arg2": 3})
 
-    # a real syntax error reports the stripped expression, caret under the right place
+    async def poke_mqtt(_i):
+        if "test/wait" in mqtt_handlers:
+            await mqtt_message("test/wait", "went")
+
+    await poke_until_done("pyscript.w1", poke_state, "waited state")
+    await poke_until_done("pyscript.w3", poke_event, "waited event")
+    await poke_until_done("pyscript.w4", poke_mqtt, "waited mqtt")
+
+    # a script catching the SyntaxError reads the line, place and text of the expression as written
     hass.states.async_set("pyscript.s", "1")
-    # same message, text and offset as CPython gives for the stripped expression
-    with pytest.raises(SyntaxError) as exc_info:
-        compile("a b", "<expr>", "eval")
-    exc = exc_info.value
-    await check(f"syntax: {exc.msg} {exc.text} {exc.offset}")
+    for expected in [
+        ["invalid syntax. Perhaps you forgot a comma?", 1, 2, 1, 5, " a b"],
+        ["invalid syntax. Perhaps you forgot a comma?", 2, 3, 2, 6, "  a b "],
+        ["invalid syntax", 2, 12, 2, 13, "  x == 1 and"],
+        ["expression is empty", 1, 1, 1, 2, "  # nothing"],
+        ["unmatched ')'", 1, 2, 1, 3, "a) or (b"],
+    ]:
+        assert literal_eval(await wait_until_done(notify_q)) == expected
 
-    assert "IndentationError" not in caplog.text
-
-
-@pytest.mark.asyncio
-@pytest.mark.parametrize("legacy", [False, True], ids=["decorators", "legacy_decorators"])
-async def test_trigger_expression_whitespace_syntax_error(hass, caplog, monkeypatch, legacy):
-    """A broken trigger expression is shown stripped, with the marker under the problem."""
-    if legacy:
-        monkeypatch.setenv("NODM", "1")
-    await setup_script(
-        hass,
-        None,
-        [dt(2020, 7, 1, 10, 59, 59, 999999)],
-        r"""
-@state_trigger("\n   \t(1 +\n  * 2) \n")
-def func1():
-    pass
-
-@event_trigger("some_event", "  \n a b ")
-def func2():
-    pass
-""",
-    )
-    assert (
-        """File "/hello.py", line 2, in file.hello.func1 @state_trigger()
-    * 2)
-    ^
-SyntaxError: invalid syntax"""
-        in caplog.text
-    )
-    assert (
-        """File "/hello.py", line 1, in file.hello.func2 @event_trigger()
-    a b
-      ^
-SyntaxError: invalid syntax"""
-        in caplog.text
-    )
     assert "IndentationError" not in caplog.text
 
 
@@ -755,3 +830,146 @@ async def test_trigger_expression_comments(hass, caplog, monkeypatch, legacy):
         assert await wait_until_done(notify_q) == expected
 
     assert "SyntaxError" not in caplog.text
+
+
+TRIGGER_EXPR_ERROR_SOURCE = r"""
+@state_trigger("\n   \t(1 +\n  * 2)\n")
+def func1():
+    pass
+
+@event_trigger("some_event", "  \n a b")
+def func2():
+    pass
+
+@state_trigger(" a b")
+def func3():
+    pass
+
+@state_trigger("\n  pyscript.x == '1' and\n")
+def func4():
+    pass
+
+@state_trigger("pyscript.x == '1' and (\n  pyscript.y == '1'")
+def func5():
+    pass
+
+@state_trigger("  # nothing here")
+def func6():
+    pass
+
+@state_trigger("pyscript.x == '1') or (pyscript.y == '1'")
+def func7():
+    pass
+
+@state_trigger("pyscript.x == '1'", "pyscript.x == '2' or\n  pyscript.y = 1")
+def func8():
+    pass
+
+@state_active(" pyscript.x = 1")
+@state_trigger("pyscript.x")
+def func9():
+    pass
+
+@mqtt_trigger("some/topic", "\n payload == 1 and\n  (a b)")
+def func10():
+    pass
+
+@webhook_trigger("some_hook", " a b")
+def func11():
+    pass
+
+@state_trigger(" 1 / int(pyscript.r1) > 0")
+def func12():
+    pass
+
+@state_trigger('''
+    pyscript.r2 == '1' and
+    1 / int(pyscript.r3) > 0
+''')
+def func13():
+    pass
+
+@state_trigger("pyscript.r4 == '1'", '''
+    pyscript.r4 == '2' or
+    1 / int(pyscript.r5) > 0
+''')
+def func14():
+    pass
+"""
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("legacy", [False, True], ids=["decorators", "legacy_decorators"])
+async def test_trigger_expression_error_messages(hass, caplog, monkeypatch, legacy):
+    """Errors in a trigger expression show the expression as written, pointing at the problem."""
+    if legacy:
+        monkeypatch.setenv("NODM", "1")
+    await setup_script(hass, None, [dt(2020, 7, 1, 10, 59, 59, 999999)], TRIGGER_EXPR_ERROR_SOURCE)
+    hass.bus.async_fire(EVENT_HOMEASSISTANT_STARTED)
+    await hass.async_block_till_done()
+    hass.states.async_set("pyscript.r1", "0")
+    hass.states.async_set("pyscript.r3", "0")
+    hass.states.async_set("pyscript.r2", "1")
+    hass.states.async_set("pyscript.r5", "0")
+    await hass.async_block_till_done()
+
+    for expected in [
+        # syntax errors: on the first line one place to the left, later lines unchanged
+        """line 3, in file.hello.func1 @state_trigger()
+    * 2)
+    ^
+SyntaxError: invalid syntax""",
+        """line 2, in file.hello.func2 @event_trigger()
+    a b
+SyntaxError: invalid syntax. Perhaps you forgot a comma?""",
+        """line 1, in file.hello.func3 @state_trigger()
+    a b
+SyntaxError: invalid syntax. Perhaps you forgot a comma?""",
+        # cut short: at the last character of the last line that isn't blank
+        """line 2, in file.hello.func4 @state_trigger()
+    pyscript.x == '1' and
+                        ^
+SyntaxError: invalid syntax""",
+        """line 1, in file.hello.func5 @state_trigger()
+    pyscript.x == '1' and (
+                          ^
+SyntaxError: '(' was never closed""",
+        """line 1, in file.hello.func6 @state_trigger()
+    # nothing here
+SyntaxError: expression is empty""",
+        """line 1, in file.hello.func7 @state_trigger()
+    pyscript.x == '1') or (pyscript.y == '1'
+                     ^
+SyntaxError: unmatched ')'""",
+        # several entries: the line of the any([...]) text, as before
+        """line 3, in file.hello.func8 @state_trigger()
+    pyscript.y = 1
+               ^
+SyntaxError: invalid syntax""",
+        """line 1, in file.hello.func9 @state_active()
+    pyscript.x = 1
+    ^^^^^^^^^^
+SyntaxError: cannot assign to attribute here. Maybe you meant '==' instead of '='?""",
+        """line 3, in file.hello.func10 @mqtt_trigger()
+    (a b)
+     ^^^
+SyntaxError: invalid syntax. Perhaps you forgot a comma?""",
+        """line 1, in file.hello.func11 @webhook_trigger()
+    a b
+SyntaxError: invalid syntax. Perhaps you forgot a comma?""",
+        # errors while the expression runs
+        """line 1, in file.hello.func12 @state_trigger()
+    1 / int(pyscript.r1) > 0
+    ~~^~~~~~~~~~~~~~~~~~
+ZeroDivisionError: division by zero""",
+        """line 3, in file.hello.func13 @state_trigger()
+    1 / int(pyscript.r3) > 0
+    ~~^~~~~~~~~~~~~~~~~~
+ZeroDivisionError: division by zero""",
+        """line 4, in file.hello.func14 @state_trigger()
+    1 / int(pyscript.r5) > 0
+    ~~^~~~~~~~~~~~~~~~~~
+ZeroDivisionError: division by zero""",
+    ]:
+        assert f'File "/hello.py", {expected}' in caplog.text
+    assert "IndentationError" not in caplog.text

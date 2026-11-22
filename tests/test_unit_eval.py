@@ -4893,7 +4893,7 @@ async def test_class_init_super_match_python(hass, caplog):
 @pytest.mark.asyncio
 @pytest.mark.parametrize("source", [" x = 1", "\n  x = 1\n", "if True:\nx = 1"])
 async def test_script_indentation_stays_strict(hass, source):
-    """Only trigger expressions are stripped: script code keeps Python's indentation rules."""
+    """Only trigger expressions are put inside brackets: script code keeps Python's indentation rules."""
     hass.data[DOMAIN] = {CONFIG_ENTRY: MockConfigEntry(domain=DOMAIN, data={CONF_ALLOW_ALL_IMPORTS: False})}
     Function.init(hass)
     with pytest.raises(IndentationError) as cpython_exc:

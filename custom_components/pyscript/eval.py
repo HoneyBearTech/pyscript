@@ -4,6 +4,8 @@ import ast
 import asyncio
 import builtins
 from collections import OrderedDict
+from collections.abc import Iterator
+import contextlib
 import functools
 import importlib
 import inspect
@@ -12,6 +14,7 @@ import keyword
 import logging
 import sys
 import time
+import tokenize
 import traceback
 from types import TracebackType
 from typing import TYPE_CHECKING, Any
@@ -946,6 +949,61 @@ class EvalFuncVarClassInst(EvalFuncVar):
     async def __call__(self, *args, **kwargs):
         """Call the function using our saved ast ctx and class instance."""
         return await self.func.call(self.ast_ctx, self.class_inst, *args, **kwargs)
+
+
+#
+# Tokens that aren't code, for the empty trigger expression check
+#
+NOT_CODE_TOKENS = frozenset(
+    {tokenize.COMMENT, tokenize.NL, tokenize.NEWLINE, tokenize.INDENT, tokenize.DEDENT, tokenize.ENDMARKER}
+)
+
+
+def _source_tokens(source: str) -> Iterator[tokenize.TokenInfo]:
+    """
+    Yield the tokens of source, stopping quietly at a tokenize error (the parser reports it).
+
+    ValueError covers the UnicodeDecodeError tokenize raises for some invalid text with a lone carriage return.
+    """
+    with contextlib.suppress(tokenize.TokenError, SyntaxError, ValueError):
+        yield from tokenize.generate_tokens(io.StringIO(source).readline)
+
+
+def check_added_brackets(source: str, added: dict[tuple[int, int], tuple[int, int]], filename: str) -> None:
+    """
+    Check that each expression put inside added brackets is one non-empty expression.
+
+    added maps the (line, column) of each added opening bracket to that of its added closing bracket.
+    Brackets inside strings and comments are skipped, because they are part of those tokens.
+    Raise SyntaxError, positioned in source, for an expression that closes the added bracket before
+    its end (like "a) or (b"), that leaves a bracket of its own open, or that has no code at all.
+    """
+    added_closers = set(added.values())
+    stack: list[tuple[tokenize.TokenInfo, bool, int]] = []
+    code_tokens = 0
+
+    def error(msg: str, tok: tokenize.TokenInfo) -> SyntaxError:
+        lineno, col = tok.start
+        return SyntaxError(msg, (filename, lineno, col + 1, tok.line.rstrip("\n"), lineno, col + 2))
+
+    for tok in _source_tokens(source):
+        if tok.type == tokenize.OP and tok.string in ("(", "[", "{"):
+            is_added = tok.start in added
+            stack.append((tok, is_added, code_tokens))
+            code_tokens += not is_added
+        elif tok.type == tokenize.OP and tok.string in (")", "]", "}") and stack:
+            opener, is_added, code_tokens_before = stack.pop()
+            if tok.start in added_closers:
+                if not is_added:
+                    raise error(f"'{opener.string}' was never closed", opener)
+                if code_tokens == code_tokens_before:
+                    raise error("expression is empty", opener)
+            elif is_added:
+                raise error(f"unmatched '{tok.string}'", tok)
+            else:
+                code_tokens += 1
+        elif tok.type not in NOT_CODE_TOKENS:
+            code_tokens += 1
 
 
 class AstEval:
@@ -2415,6 +2473,94 @@ class AstEval:
             self.code_list = []
         self.ast = ast.parse(self.code_str, filename=self.filename, mode=mode)
 
+    def parse_trigger_expr(self, exprs: str | list[str]) -> None:
+        r"""
+        Parse a trigger expression, or several joined into any([...]), each inside brackets.
+
+        Each expression is parsed as "(" + expr + "\n)", so it reads as it would inside brackets in
+        Python: it may start and end with blanks, run over several lines and end with a # comment.
+        Error messages show the text as written (or the any([...]) text for several), so for one
+        expression the positions of syntax errors and AST nodes are moved back onto that text.
+        """
+        self.ast = None
+        if isinstance(exprs, str):
+            exprs = [exprs]
+        if len(exprs) == 1:
+            self.code_str = exprs[0]
+            source = "(" + exprs[0] + "\n)"
+            added = {(1, 0): (source.count("\n") + 1, 0)}
+        else:
+            source, added = "any([", {}
+            for idx, expr in enumerate(exprs):
+                if idx > 0:
+                    source += ", "
+                lines = source.split("\n")
+                opener = (len(lines), len(lines[-1]))
+                source += "(" + expr + "\n"
+                added[opener] = (source.count("\n") + 1, 0)
+                source += ")"
+            source += "])"
+            self.code_str = source
+        self.code_list = self.code_str.split("\n")
+        try:
+            check_added_brackets(source, added, self.filename)
+            self.ast = ast.parse(source, filename=self.filename, mode="eval")
+        except SyntaxError as exc:
+            self._move_syntax_error(exc, len(exprs) == 1)
+            raise
+        if len(exprs) == 1:
+            for node in ast.walk(self.ast):
+                if hasattr(node, "lineno"):
+                    node.lineno, node.col_offset = self._user_pos(node.lineno, node.col_offset, True)
+                if getattr(node, "end_lineno", None) is not None:
+                    node.end_lineno, node.end_col_offset = self._user_pos(
+                        node.end_lineno, node.end_col_offset, True
+                    )
+
+    def _user_pos(self, lineno: int, col: int, in_bytes: bool = False) -> tuple[int, int]:
+        r"""
+        Map a 0-based column in "(" + expr + "\n)" back to the expression as written.
+
+        Line 1 loses the added "(". The added ")" line maps to just after the last character of
+        the last line that isn't blank. Columns are in characters, or in UTF-8 bytes (as in the
+        AST) if in_bytes.
+        """
+        if lineno == 1:
+            return 1, max(col - 1, 0)
+        if lineno > len(self.code_list):
+            lineno = max((idx for idx, line in enumerate(self.code_list, 1) if line.strip()), default=1)
+            line = self.code_list[lineno - 1].rstrip()
+            return lineno, len(line.encode()) if in_bytes else len(line)
+        return lineno, col
+
+    def _move_syntax_error(self, exc: SyntaxError, bracketed: bool) -> None:
+        r"""
+        Put a SyntaxError onto the text shown in error messages, in the fields a script can read.
+
+        If bracketed, the error is moved from "(" + expr + "\n)" onto the expression as written.
+        """
+        if exc.lineno is None or exc.offset is None:
+            return
+        if bracketed:
+            on_closer = exc.lineno > len(self.code_list)
+            lineno, col = self._user_pos(exc.lineno, exc.offset - 1)
+            if on_closer:
+                # point at the last character, where the expression stops short
+                col = max(col - 1, 0)
+            exc.lineno, exc.offset = lineno, col + 1
+            if on_closer or exc.end_lineno is None or exc.end_offset is None:
+                exc.end_lineno, exc.end_offset = lineno, col + 2
+            else:
+                end_lineno, end_col = self._user_pos(exc.end_lineno, exc.end_offset - 1)
+                exc.end_lineno = end_lineno
+                exc.end_offset = max(end_col + 1, col + 2 if end_lineno == lineno else 1)
+        if 1 <= exc.lineno <= len(self.code_list):
+            exc.text = self.code_list[exc.lineno - 1]
+        exc.args = (
+            exc.msg,
+            (exc.filename, exc.lineno, exc.offset, exc.text, exc.end_lineno, exc.end_offset),
+        )
+
     def log_exception(self, exc: Exception) -> None:
         """Log eval exception."""
         try:
@@ -2586,7 +2732,10 @@ class EvalExceptionFormatter:
                         self.current_filename = eval_func.global_ctx.get_file_path()
                 elif code.co_qualname == AstEval.call_func.__qualname__ and self.current_func is None:
                     self.current_func = frame.f_locals.get("func_name", None)
-                elif code.co_qualname == AstEval.parse.__qualname__ and isinstance(self.exc, SyntaxError):
+                elif code.co_qualname in (
+                    AstEval.parse.__qualname__,
+                    AstEval.parse_trigger_expr.__qualname__,
+                ) and isinstance(self.exc, SyntaxError):
                     ctx = frame.f_locals.get("self")
                     self.current_code_list = ctx.code_list
                     self.current_filename = ctx.global_ctx.get_file_path() or ctx.filename

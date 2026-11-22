@@ -546,11 +546,19 @@ The trigger can include arguments with any mixture of string expressions (that a
 when any of the underlying state variables change) and string state variable or attribute
 names (that trigger whenever that variable or attribute changes).
 
-A trigger expression may start or end with spaces, tabs or new lines, which are ignored, so it can
-be written over several lines in a triple-quoted string. Inside the expression Python's usual
-rules still apply, so a multi-line expression needs brackets around it. The same goes for
-``@state_active``, ``task.wait_until`` and the expressions of ``@event_trigger``,
-``@mqtt_trigger`` and ``@webhook_trigger``.
+A trigger expression is read as if it were inside brackets, so it may start and end with spaces,
+tabs or new lines, and it can run over several lines without brackets of its own, for example in a
+triple-quoted string. Any of its lines can end with a ``# comment``:
+
+.. code:: python
+
+   @state_trigger("""
+       binary_sensor.motion == 'off' and  # nobody there
+       light.porch == 'on'
+   """)
+
+The same goes for ``@state_active``, ``task.wait_until`` and the expressions of ``@event_trigger``,
+``@mqtt_trigger``, ``@webhook_trigger`` and ``@webhook_handler``.
 
 Note that if a state variable and attributes are set to the same value, HASS doesn't generate a
 state change event, so the ``@state_trigger`` condition will not be checked. It is only evaluated

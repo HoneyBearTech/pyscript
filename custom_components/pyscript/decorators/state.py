@@ -12,12 +12,7 @@ from homeassistant.helpers import config_validation as cv
 from ..decorator import WaitUntilDecoratorManager
 from ..decorator_abc import DecoratorManagerStatus, DispatchData, TriggerDecorator, TriggerHandlerDecorator
 from ..state import State
-from ..trigger import (
-    any_trigger_exprs,
-    ident_any_values_changed,
-    ident_values_changed,
-    strip_trigger_expr,
-)
+from ..trigger import ident_any_values_changed, ident_values_changed
 from .base import AutoKwargsDecorator, ExpressionDecorator
 
 STATE_RE = re.compile(r"\w+\.\w+(\.((\w+)|\*))?$")
@@ -121,19 +116,13 @@ class StateTriggerDecorator(TriggerDecorator, ExpressionDecorator, AutoKwargsDec
         state_trig = []
 
         for trig in self.args:
-            trig = strip_trigger_expr(trig)
-            if STATE_RE.match(trig):
-                self.state_trig_ident_any.add(trig)
+            if STATE_RE.match(trig.strip()):
+                self.state_trig_ident_any.add(trig.strip())
             else:
                 state_trig.append(trig)
 
         if len(state_trig) > 0:
-            if len(state_trig) == 1:
-                state_trig_expr = state_trig[0]
-            else:
-                state_trig_expr = any_trigger_exprs(state_trig)
-
-            self.create_expression(state_trig_expr)
+            self.create_expression(state_trig)
 
         if self.kwargs.get("watch") is not None:
             self.state_trig_ident = set(self.kwargs.get("watch", []))

@@ -32,21 +32,6 @@ _LOGGER = logging.getLogger(LOGGER_PATH + ".trigger")
 STATE_RE = re.compile(r"\w+\.\w+(\.((\w+)|\*))?$")
 
 
-def strip_trigger_expr(expr):
-    """Strip surrounding whitespace from a trigger expression (non-strings are returned as is)."""
-    return expr.strip(" \t\r\n") if isinstance(expr, str) else expr
-
-
-def any_trigger_exprs(exprs):
-    """
-    Join trigger expressions into one any([...]) expression.
-
-    Each expression goes on its own lines, so a trailing # comment can't swallow the separator
-    or the closing bracket that follow it.
-    """
-    return "any([" + "\n,\n".join(exprs) + "\n])"
-
-
 def dt_now():
     """Return current time."""
     return dt.datetime.now()
@@ -289,24 +274,19 @@ class TrigTime:
             # on any change (no expr)
             #
             for trig in state_trigger:
-                trig = strip_trigger_expr(trig)
-                if STATE_RE.match(trig):
-                    state_trig_ident_any.add(trig)
+                if isinstance(trig, str) and STATE_RE.match(trig.strip()):
+                    state_trig_ident_any.add(trig.strip())
                 else:
                     state_trig.append(trig)
 
             if len(state_trig) > 0:
-                if len(state_trig) == 1:
-                    state_trig_expr = state_trig[0]
-                else:
-                    state_trig_expr = any_trigger_exprs(state_trig)
                 state_trig_eval = AstEval(
                     f"{ast_ctx.name} state_trigger",
                     ast_ctx.get_global_ctx(),
                     logger_name=ast_ctx.get_logger_name(),
                 )
                 Function.install_ast_funcs(state_trig_eval)
-                state_trig_eval.parse(state_trig_expr, mode="eval")
+                state_trig_eval.parse_trigger_expr(state_trig)
                 state_trig_ident = await state_trig_eval.get_names()
 
             state_trig_ident.update(state_trig_ident_any)
@@ -352,7 +332,7 @@ class TrigTime:
                 )
                 Function.install_ast_funcs(event_trig_expr)
                 try:
-                    event_trig_expr.parse(strip_trigger_expr(event_trigger[1]), mode="eval")
+                    event_trig_expr.parse_trigger_expr(event_trigger[1])
                 except:
                     if len(state_trig_ident) > 0:
                         State.notify_del(state_trig_ident, notify_q)
@@ -369,7 +349,7 @@ class TrigTime:
                 )
                 Function.install_ast_funcs(mqtt_trig_expr)
                 try:
-                    mqtt_trig_expr.parse(strip_trigger_expr(mqtt_trigger[1]), mode="eval")
+                    mqtt_trig_expr.parse_trigger_expr(mqtt_trigger[1])
                 except:
                     if len(state_trig_ident) > 0:
                         State.notify_del(state_trig_ident, notify_q)
@@ -386,7 +366,7 @@ class TrigTime:
                 )
                 Function.install_ast_funcs(webhook_trig_expr)
                 try:
-                    webhook_trig_expr.parse(strip_trigger_expr(webhook_trigger[1]), mode="eval")
+                    webhook_trig_expr.parse_trigger_expr(webhook_trigger[1])
                 except:
                     if len(state_trig_ident) > 0:
                         State.notify_del(state_trig_ident, notify_q)
@@ -915,7 +895,6 @@ class TrigInfo:
         self.notify_q = asyncio.Queue(0)
         self.active_expr = None
         self.state_active_ident = None
-        self.state_trig_expr = None
         self.state_trig_eval = None
         self.state_trig_ident = None
         self.state_trig_ident_any = set()
@@ -932,7 +911,7 @@ class TrigInfo:
                 f"{self.name} @state_active()", self.global_ctx, logger_name=self.name
             )
             Function.install_ast_funcs(self.active_expr)
-            self.active_expr.parse(strip_trigger_expr(self.state_active), mode="eval")
+            self.active_expr.parse_trigger_expr(self.state_active)
 
         if "time_trigger" in trig_cfg and self.time_trigger is None:
             self.run_on_startup = True
@@ -958,23 +937,18 @@ class TrigInfo:
                 # on any change (no expr)
                 #
                 for trig in triggers:
-                    trig = strip_trigger_expr(trig)
-                    if STATE_RE.match(trig):
-                        self.state_trig_ident_any.add(trig)
+                    if STATE_RE.match(trig.strip()):
+                        self.state_trig_ident_any.add(trig.strip())
                     else:
                         state_trig.append(trig)
 
             if len(state_trig) > 0:
-                if len(state_trig) == 1:
-                    self.state_trig_expr = state_trig[0]
-                else:
-                    self.state_trig_expr = any_trigger_exprs(state_trig)
                 self.state_trig_eval = AstEval(
                     f"{self.name} @state_trigger()", self.global_ctx, logger_name=self.name
                 )
                 Function.install_ast_funcs(self.state_trig_eval)
                 try:
-                    self.state_trig_eval.parse(self.state_trig_expr, mode="eval")
+                    self.state_trig_eval.parse_trigger_expr(state_trig)
                 except Exception as exc:
                     self.state_trig_eval.log_exception(exc)
                     return
@@ -989,7 +963,7 @@ class TrigInfo:
                 )
                 Function.install_ast_funcs(self.event_trig_expr)
                 try:
-                    self.event_trig_expr.parse(strip_trigger_expr(self.event_trigger[1]), mode="eval")
+                    self.event_trig_expr.parse_trigger_expr(self.event_trigger[1])
                 except Exception as exc:
                     self.event_trig_expr.log_exception(exc)
                     return
@@ -1004,7 +978,7 @@ class TrigInfo:
                 )
                 Function.install_ast_funcs(self.mqtt_trig_expr)
                 try:
-                    self.mqtt_trig_expr.parse(strip_trigger_expr(self.mqtt_trigger[1]), mode="eval")
+                    self.mqtt_trig_expr.parse_trigger_expr(self.mqtt_trigger[1])
                 except Exception as exc:
                     self.mqtt_trig_expr.log_exception(exc)
                     return
@@ -1019,7 +993,7 @@ class TrigInfo:
                 )
                 Function.install_ast_funcs(self.webhook_trig_expr)
                 try:
-                    self.webhook_trig_expr.parse(strip_trigger_expr(self.webhook_trigger[1]), mode="eval")
+                    self.webhook_trig_expr.parse_trigger_expr(self.webhook_trigger[1])
                 except Exception as exc:
                     self.webhook_trig_expr.log_exception(exc)
                     return
