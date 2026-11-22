@@ -65,3 +65,41 @@ CEO, Engineer, QA, Security Officer, Auditor, plan review, plain-English check. 
 ## Out of scope
 - `StopAsyncIteration`, `except*` (pyscript doesn't support it yet), and the cases listed as limits.
 - #919, which is ready to merge.
+
+## Record
+**2026-11-22. Built and checked.** The finished change is `team/review-920-pr`: one new signed-off commit, `0470f71` "let StopIteration be caught in try/except", on master `a7a9541`. It replaces `c89c40b`. After Gate B it goes on the fork's `fix-stopiteration` with a guarded push from `c89c40b`.
+
+**What shipped**
+- **The helper.** `unwrap_stop_iteration()` recovers the `StopIteration`. It only does so when the error is exactly a `RuntimeError` whose only argument is the string `"coroutine raised StopIteration"` and whose `__cause__` is a `StopIteration`.
+- **Where it's used:**
+  - `ast_try` matches and binds `except` clauses with it;
+  - `with_items` uses it for `__exit__` and `__aexit__`;
+  - `genexp_loop` uses it for an element, a filter or an inner iterable. That re-raises from the generator, so Python gives `RuntimeError("generator raised StopIteration")`. It keeps the script frames, using `BaseException`'s own traceback descriptor and method;
+  - `EvalExceptionFormatter` uses it to show the `StopIteration` with the replacement's script frames and the `StopIteration`'s own native frames;
+  - the Jupyter kernel uses it for `ename` and `evalue`.
+- **The formatter.** It's cycle-safe, and for `raise X from exc` it searches the context chain for the replacement.
+- **Deliberate deviation from the plan:** the async-generator message isn't unwrapped. pyscript has no async generators of its own, so that message only comes from native code, where the error is genuine.
+- **Size:** `eval.py` adds 67 lines and removes 17, of which 50 added lines are code. The old version added 648 and removed 424.
+- **Docs:** one new Language Limitations item, with four limits:
+  - handler state (`sys.exception()`, `sys.exc_info()`, `__context__`);
+  - a genuine native `RuntimeError` with the same message, or a pyscript `async def` that raises it, caught as `StopIteration`;
+  - native code awaiting a pyscript function gets the `RuntimeError`;
+  - a saved exception raised from after its handler has ended loses its script line in the report.
+
+**Scripts:** 44 of the 57 old scripts match Python: the maintainer's 41, plus 17, 38 and 47 (the generator expression ones). There are 5 new scripts, so 49 comparison scripts in all, and 43 of them fail on master. The other 13 are documented limits, checked by `test_stop_iteration_limits`:
+- handler state: scripts 9, 10, 19, 20, 21 and 34;
+- a genuine `RuntimeError`: scripts 18, 22–26 and 57.
+
+**Checks:** 232 tests, pre-commit and the docs build with warnings treated as errors all pass on Python 3.14. It merges into master with no clashes. With #919, the only clash is the "keep both" tests at the end of the test file, and with both kept, 235 tests pass.
+- **Plan review:** it found four gaps, all folded in before Gate A:
+  - the report lost the script frames;
+  - an uncaught `raise e` crashed the report with `RecursionError`;
+  - Jupyter's error fields;
+  - the limit groups were wrong. #918's setters need nothing.
+- **QA:** pass. Two description fixes were made.
+- **Security:** clear.
+- **Audit:**
+  - **Round 1:** one must-fix, generator expression conversion dropped the failing function's frames. One should-fix, `raise X from exc` lost the cause's line when another exception came in between. Both were fixed; the saved-exception case became a documented limit.
+  - **Round 2:** one must-fix, `with_traceback()` dispatched to a subclass override. Fixed with `BaseException`-level access, plus comparison script 49.
+  - The re-check approved, with no findings.
+- **Before Gate B:** the team fetched #920's comments again. Nothing new.
