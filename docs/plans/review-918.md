@@ -53,3 +53,45 @@ CEO, Engineer, QA, Security Officer, Auditor, plan review, plain-English check. 
 ## Out of scope
 - `functools.cached_property`, `super().prop`, and pyscript properties in classes that override `__getattribute__`/`__setattr__`. They stay listed as limitations, unless step 2 or 3 changes one of them.
 - Making `getattr()`, `setattr()` or `delattr()` from native code call a pyscript property. That would need a different design.
+
+---
+
+## Record (2026-11-22)
+
+**Status:** built and checked. Nothing open. Nothing has been sent upstream yet.
+
+**What's ready:** `team/review-918-pr`, commit `8b9cdfa`. It's one commit, "support @property and @classmethod on pyscript class methods", on upstream master `029e522`. After approval it replaces `b24ab7d` on the fork's `fix-property-classmethod` branch, which is #918's branch.
+
+**What changed, by the maintainer's points:**
+1. **Rebase:** onto `029e522`. `unwrap_defined`, the `ModuleType` import and #918's module branch in `ast_attribute` are dropped, as #915 removed them. The property lookup now comes after #916's `__init__` check, and the classmethod case in `call_func` comes before #916's `super()` handling. All 31 earlier comparison scripts are unchanged and pass.
+2. **Deleter:** `EvalAttrSet.delattr_async` awaits a pyscript deleter. `ast_delete` uses it for object attributes, and deleting a state variable is unchanged. The new `test_property_deleter_match_python` compares 12 scripts with CPython and checks that there's no "never awaited" warning. 7 of them fail without the change. The other 5 check behaviour that must stay the same.
+3. **Docs:** the `@property` item in Language Limitations now says:
+   - the deleter works;
+   - `getattr()` gives a coroutine and `hasattr()` is True;
+   - the built-in `setattr()` and `delattr()` don't run the pyscript code;
+   - use `obj.prop`, `obj.prop = value` and `del obj.prop` instead.
+   Every sentence was tried on the branch.
+4. **`super()` in a classmethod:** the new `test_classmethod_super_match_python` compares 6 scripts with CPython. No interpreter change was needed. All 6 fail without #918's classmethod support.
+
+**Checks:**
+- Full suite: 228 passed.
+- pre-commit: all hooks pass, and no files are left modified.
+- `sphinx-build -W`: passes.
+- Speed: about 2% slower than master on an attribute-load microbenchmark, which is within noise.
+- QA: passed every plan step, and checked that both new tests fail without their change.
+- Security: clear.
+- Audit: approved in round 1, with 36 further probes against CPython. No fix rounds were needed.
+
+**Deviations from the plan:** none.
+
+**Still documented as limits:**
+- a pyscript getter, setter or deleter on a `property` subclass, or in a class with its own `__getattribute__`, `__setattr__` or `__delattr__`;
+- `functools.cached_property`;
+- `super().prop`;
+- the built-in `getattr()`, `setattr()` and `delattr()`.
+
+**Overlaps:** #919 (lambdas) and #920 (`StopIteration`) also change `eval.py`. #919, #920 and #921 add tests at the end of `tests/test_unit_eval.py`. Whichever merges later needs a small rebase.
+
+**Skipped:**
+- the Researcher, because the maintainer's comment gave the facts;
+- the second security review, because nothing security-related changed.
