@@ -104,3 +104,4 @@ CEO, Engineer, QA, Security Officer, Auditor, plan review, plain-English check. 
   - The re-check approved, with no findings.
 - **Before Gate B:** the team fetched #920's comments again. Nothing new.
 - Plain-English check: it confirmed every count. It found that the summaries were hard for a non-coder to read, so they now use plainer wording and say what the four limits mean. The old version's size is now labelled as its own commit's changes.
+- After Gate B: #919 was merged upstream (`0149ea9`), so #920 now clashed with master in the test file. The commit was moved onto the new master as `8d5b6b0`, keeping both sets of tests. The code, docs and Jupyter test changes are identical to the approved `0470f71`. On the new master, 235 tests, pre-commit and the docs build pass. The upstream description and reply were updated to match, and the owner was asked to approve again before #920's branch is updated.
