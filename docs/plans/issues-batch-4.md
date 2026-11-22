@@ -129,7 +129,7 @@ The lambda and `StopIteration` branches both change `eval.py`, its tests and `do
 **Checks (Python 3.14, shared test setup):**
 - Every branch passes the full suite, pre-commit and `sphinx-build -W`.
 - Lambda, trigger and docs merged together pass 249 tests. `StopIteration`, trigger and lambda merged together pass 248. Lambda plus `StopIteration` passes 225. All are temporary merges.
-- **Lambdas:** 45 + 29 scripts compared with Python. No case that matches Python on master fails on the branch. That was checked across 197 comparisons.
+- **Lambdas:** 63 scripts compared with Python (45 for lambdas and 18 for comprehensions, some run twice). No case that matches Python on master fails on the branch. That was checked across 197 comparisons.
 - **`StopIteration`:** 48 scripts compared with Python. Master gets 37 of them wrong. `try` blocks run within a few percent of master's speed.
 - **Trigger blanks:** tests for the current and legacy decorators and for `task.wait_until`. 399 expression pairs give the same parse as before.
 - **Docs:** the example was run against pyscript for a new entity, an attribute-only update, an added attribute and a deletion.
