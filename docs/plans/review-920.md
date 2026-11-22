@@ -103,3 +103,4 @@ CEO, Engineer, QA, Security Officer, Auditor, plan review, plain-English check. 
   - **Round 2:** one must-fix, `with_traceback()` dispatched to a subclass override. Fixed with `BaseException`-level access, plus comparison script 49.
   - The re-check approved, with no findings.
 - **Before Gate B:** the team fetched #920's comments again. Nothing new.
+- Plain-English check: it confirmed every count. It found that the summaries were hard for a non-coder to read, so they now use plainer wording and say what the four limits mean. The old version's size is now labelled as its own commit's changes.
