@@ -106,3 +106,65 @@ The lambda and `StopIteration` branches both change `eval.py`, its tests and `do
 - Inner `@pyscript_compile` functions seeing enclosing variables: the docs list that as a limit, and this plan covers lambdas only.
 - Giving comprehensions their own scope (see step 1).
 - A lambda calling a pyscript class that has an `__init__` (`lambda: C(10)`). That's a separate, older limit we found while checking #916; it could be a later fix.
+
+---
+
+## Record (2026-11-22)
+
+**Status:** built and checked. Two very rare edge cases are still open; they're described below, and you decide on them. Nothing has been sent upstream yet.
+
+**What's ready:** four branches, each one commit on upstream master `06f8eba`. Each merges cleanly with today's master, `08f10e5`, which now includes #911.
+
+| Step | Branch | Commit | Upstream branch name |
+|---|---|---|---|
+| 1. #725 lambdas | `team/issues-batch-4-lambda` | `96d1324` | `fix-lambda-closure-725` |
+| 2. `StopIteration` | `team/issues-batch-4-stopiteration` | `3372755` | `fix-stopiteration` |
+| 3. #617 trigger blanks | `team/issues-batch-4-trigger-ws` | `98f0544` | `fix-trigger-expr-whitespace-617` |
+| 4. #433 docs | `team/issues-batch-4-attr-docs` | `29d933d` | `docs-attribute-old-value-433` |
+
+**Changes from the plan:**
+- **Lambdas:** the plan said a lambda made in a list comprehension, and called after the comprehension ended, would get a clear `NameError`. That limit turned out to be unnecessary, so it was dropped. Making lambdas work meant giving comprehension loop variables their own variable for each run in functions that share variables. With that in place, those lambdas behave exactly as in Python. Functions without an inner function or lambda keep master's behaviour.
+- **`StopIteration`:** the first design recognised pyscript's own error by its message and traceback. The audit showed a script could fake or erase those, so it was replaced. Now a private marker is attached at the exact moment pyscript creates the error, and nothing a script does can fake or erase it.
+
+**Checks (Python 3.14, shared test setup):**
+- Every branch passes the full suite, pre-commit and `sphinx-build -W`.
+- Lambda, trigger and docs merged together pass 249 tests. `StopIteration`, trigger and lambda merged together pass 248. Lambda plus `StopIteration` passes 225. All are temporary merges.
+- **Lambdas:** 45 + 29 scripts compared with Python. No case that matches Python on master fails on the branch. That was checked across 197 comparisons.
+- **`StopIteration`:** 48 scripts compared with Python. Master gets 37 of them wrong. `try` blocks run within a few percent of master's speed.
+- **Trigger blanks:** tests for the current and legacy decorators and for `task.wait_until`. 399 expression pairs give the same parse as before.
+- **Docs:** the example was run against pyscript for a new entity, an attribute-only update, an added attribute and a deletion.
+
+**Review rounds:**
+- **Security:** clear on all four.
+- **Lambdas:** audit rounds 1 to 3, with two fix rounds. The rounds found an inner generator losing its variables, the `except` name staying set, `:=` writes being lost, and a lambda's own names leaking out. All were fixed.
+- **`StopIteration`:** audit rounds 1 to 3, with two fix rounds. The rounds found argument comparison, native coroutines, handler expressions, a cleared traceback, and operator nodes. All were fixed.
+- **Trigger blanks:** audit round 1 found a `# comment` swallowing the next entry. It was fixed and approved.
+- **Docs:** approved in round 1.
+- QA passed each branch.
+
+**Open (both very rare; each fix round found a smaller case than the last):**
+- **Lambdas:** in a nested function, a lambda that contains `__debug__` and also binds a name with `:=` or in a comprehension makes the enclosing function pick up an outer variable of that name. You can only see it through `eval()` or `locals()`.
+- **`StopIteration`:** if a `with` block's `__exit__` returns an object whose `__bool__` raises `StopIteration`, the result is a `RuntimeError` instead of a `StopIteration`.
+
+Both are listed in their PR descriptions.
+
+**Found, not fixed (already on master):**
+- With the current decorators, `task.wait_until` returns at once when its expressions name no state variable.
+- `y: Any[int] = None` in a function raises an error (#796), though Python never evaluates local annotations.
+- An empty trigger expression gives a bare `SyntaxError`.
+- `except*` isn't supported, and `except BaseException` catches only `Exception`.
+- Comprehension targets declared `nonlocal` or `global` behave differently from Python.
+
+**Overlaps:**
+- Lambda and `StopIteration` clash in 6 places in `eval.py`. Whichever merges second needs about an hour's rebase, which we've already tried out. #916 clashes with the lambda branch in one spot in `ast_generatorexp`.
+- Lambda, `StopIteration`, trigger and #916 all add tests at the end of `tests/test_unit_eval.py`. Each of those clashes is a small "keep both".
+
+**Issues already fixed:** 10 checked on master `08f10e5`.
+- Already closed: #520, #729 and #875.
+- Fixed or answered by the docs: #834, #821 and #265.
+- Couldn't reproduce, so the comment asks the reporter to confirm: #440 and #631.
+- Partly fixed: #796 and #864.
+
+That makes 7 comments for you to post.
+
+**Skipped:** a second security review, because nothing security-related changed.
