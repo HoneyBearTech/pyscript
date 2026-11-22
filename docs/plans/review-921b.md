@@ -78,7 +78,7 @@ CEO, Engineer, QA, Security Officer, Auditor, plan review, plain-English check. 
 - #920's rework, which is a separate job and is running now.
 
 ## Record
-**2026-11-22. Built and checked.** The finished change is `team/review-921b-pr`: `1e39bf5`, unchanged, plus one new signed-off commit, `ccd248a`, "let multi-line trigger expressions span lines without brackets (#617)". It replaces `9fe371a`. After Gate B it goes on the fork's `fix-trigger-expr-whitespace-617` with a guarded push from `9fe371a`.
+**2026-11-22. Built and checked.** The finished change is `team/review-921b-pr`: `1e39bf5`, unchanged, plus one new signed-off commit, `a2e13b7`, "let multi-line trigger expressions span lines without brackets (#617)". It replaces `9fe371a`. After Gate B it goes on the fork's `fix-trigger-expr-whitespace-617` with a guarded push from `9fe371a`.
 
 **What shipped**
 - `AstEval.parse_trigger_expr()` strips the expression first.
@@ -107,3 +107,4 @@ CEO, Engineer, QA, Security Officer, Auditor, plan review, plain-English check. 
 **Known limits, not changed**
 - An unclosed bracket in a multi-line expression is reported at the start of the first line, not at the user's bracket.
 - The existing Unicode caret offset in logged syntax errors is unchanged.
+- Plain-English check: it found five places where the texts said more than the change does. All five are fixed. One of them was the docs sentence on bare tuples, which said every bare tuple is rejected. It now says "a bare tuple that needs them for its line break", amended into the commit, and the docs build and the full suite pass again.
