@@ -168,3 +168,23 @@ Both are listed in their PR descriptions. The `StopIteration` one, and a pyscrip
 That makes 7 comments for you to post.
 
 **Skipped:** a second security review, because nothing security-related changed.
+
+### Update after #916 merged (2026-11-22)
+Upstream merged #916 (`029e522`), so the lambda, `StopIteration` and trigger branches stopped merging cleanly. All four were moved onto `029e522` and checked again.
+
+| Step | Commit | On the fork as |
+|---|---|---|
+| 1. #725 lambdas | `5581080` | `team/issues-batch-4-lambda-rebased` |
+| 2. `StopIteration` | `b8c3717` | `team/issues-batch-4-stopiteration-rebased` |
+| 3. #617 trigger blanks | `1e39bf5` | `team/issues-batch-4-trigger-ws` |
+| 4. #433 docs | `13105aa` | `team/issues-batch-4-attr-docs` |
+
+The new lambda and `StopIteration` versions are on new branch names, so nothing was overwritten. `team/issues-batch-4-base-916` points at `029e522`, for comparing.
+
+- **Lambdas:** kept #916's generator-expression handling. 2 scripts added for `super()` in methods that use lambdas, so there are now 47. `super()` without arguments inside a lambda still doesn't work; the docs have listed that since #916.
+- **`StopIteration`:** #916's object-creation code (`__new__`, `__init__`, a metaclass `__call__`, `super()`) is covered by the existing catch in `call_func`. 3 scripts added, so there are now 51.
+- **Trigger and docs:** only the "keep both" test-file clash. No interaction with #916.
+- **Checks:**
+  - Each branch passes the full suite, pre-commit and `sphinx-build -W`. Lambdas and `StopIteration` pass 227 each, trigger 248, docs 225.
+  - Lambdas, trigger and docs merged together pass 250.
+  - The Auditors reviewed the lambda and `StopIteration` rebases and approved them, with nothing to fix.
