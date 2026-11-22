@@ -41,3 +41,28 @@ CEO, Engineer, QA, Security Officer, Auditor, plan review, plain-English check. 
 ## Out of scope
 - Other strings that aren't trigger expressions, such as script code, `@time_trigger` and `@state_trigger` keyword options.
 - Updating #919 and #920 for the new master. That's a separate job.
+
+## Record
+**2026-11-22. Built and checked.** The finished change is `team/review-921-pr`: one new commit, `9fe371a` "parse trigger expressions inside brackets so they can span lines (#617)", on top of #921's commit `1e39bf5`. It's signed off. After Gate B, it's added to the fork's `fix-trigger-expr-whitespace-617` with an ordinary push.
+
+**What shipped**
+- The new `AstEval.parse_trigger_expr()` in `eval.py` parses each trigger expression as `"(" + expr + "\n)"`. It's used by `create_expression` in `decorators/base.py`, which covers `@state_trigger`, `@state_active`, `@event_trigger`, `@mqtt_trigger`, `@webhook_trigger`, `@webhook_handler` and `task.wait_until`, and by the older paths in `trigger.py`, `TrigInfo` and `TrigTime.wait_until`.
+- With several `@state_trigger` entries, each one gets its own brackets inside the `any([...])`. The `any([...])` stays, so all entries are still evaluated.
+- Positions on line 1 move back by one after parsing. A syntax error is corrected in all its fields before it's raised again. An error at the added `)` is reported at the end of the user's last line that isn't blank.
+- A short token check, `check_added_brackets`, rejects:
+  - empty, blank-only and comment-only expressions;
+  - an early close like `a) or (b`;
+  - and it reports the user's own unclosed bracket at that bracket.
+- #921's `strip_trigger_expr()` and `any_trigger_exprs()` are removed.
+- Docs: the note in the `@state_trigger` section of `docs/reference.rst` is rewritten, and the "needs brackets" sentence is gone.
+
+**Checks:** 298 tests, pre-commit (ruff, pylint, mypy, codespell and the others) and the docs build with warnings treated as errors all pass on Python 3.14. The branch merges into master `a7a9541` with no clashes. The new decorator and webhook tests fail on `1e39bf5`.
+- **Plan review:** it found three gaps: entries in the several-entry case need their own brackets, errors at the added `)` need handling, and `@webhook_handler` was missing. All three were added to the plan before Gate A.
+- **QA:** pass. Two wording notes on the description were fixed.
+- **Security:** clear, with one should-fix. Some invalid inputs with a lone carriage return and a non-ASCII character made the token check fail with a text-decoding error, instead of the parser's ordinary syntax error. Fixed, and a test was added (`test_parse_trigger_expr_tokenize_decode_error`).
+- **Audit:** approve, with no findings. It checked 376 valid inputs against Python and found no difference.
+
+**Known limits, not changed (they also happen before this change)**
+- Error markers on a line with non-ASCII text before the error can sit a few characters early in the logged message. The caught error has the right position.
+- A run-time error that spans two lines is marked only on its first line.
+- With a lone carriage return as a line break, error positions can be slightly off.
