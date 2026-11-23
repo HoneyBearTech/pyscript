@@ -110,3 +110,9 @@ CEO, Researcher (done), Engineer, QA, Security Officer, Auditor, plan review, pl
   The owner approved rounds 3 and 4 beyond the usual two. The final narrow check approved. The remaining differences were all there on master too, and go in the PR's Note.
 
 **Open for Gate B:** the plan's 10% rule was set for the four main workloads, and those are all under 10%. Deep recursion in plain functions, added to the measurements later, reaches about 14%. The PR states this, and shows the narrower rule's numbers as an alternative.
+- Plain-English check: it confirmed every count and all 12 speed rows. It found wording that claimed too much, all fixed:
+  - that every function now matches Python, when known differences remain;
+  - that the narrower rule costs nothing, when one recursion row was up to about 6% slower and it leaves two error-type cases unfixed;
+  - that deep recursion is rare in scripts, which wasn't measured.
+
+  The upstream description's narrower-rule sentence now gives the measured exception.
