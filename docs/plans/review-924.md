@@ -28,3 +28,18 @@ CEO, Engineer, Security Officer, Auditor and the plain-English check. This is a 
 
 ## Out of scope
 - Any change to `eval.py`.
+
+## Record
+**2026-11-23. Built and checked.** The finished change is `team/review-924-pr`: one new signed-off commit, `527cfba` "test that a function called from a generator expression resets genexp_id", on #924's `d4e8fe0`. It changes `tests/test_unit_eval.py` only (+44). After Gate B it goes on the fork's `comprehension-scope-every-function` with a normal push.
+
+**What shipped:** three scripts in `FUNCTION_LOCALS_TESTS`, which now has 23 scripts (46 runs):
+- the maintainer's script, exactly as he wrote it;
+- a free-variable read after a call from a generator expression's element;
+- a `super()` script.
+
+Removing any one of `call()`'s five steps (the `genexp_id` reset, the `genexp_iter` reset, the restore of both, and each restore alone) now makes at least one script fail, as written and with an inner function. Before, only the maintainer's script caught one of them. The `genexp_iter` reset was caught only by a hang, and the three restores weren't caught at all.
+
+**Checks:** 335 tests and pre-commit pass.
+- **Security:** clear. It noted that upstream's own commit `933e177` carries a tool credit line. That commit isn't ours and isn't in our diff.
+- **Audit:** approved. It redid the five removals independently, and all fail. Its one nit, that the description still said "one commit", is fixed in the description draft (text only).
+- **Plan review and QA:** skipped, since this is a trivial test-only job.
