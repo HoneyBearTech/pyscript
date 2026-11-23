@@ -37,9 +37,10 @@ CEO, Engineer, Security Officer, Auditor and the plain-English check. This is a 
 - a free-variable read after a call from a generator expression's element;
 - a `super()` script.
 
-Removing any one of `call()`'s five steps (the `genexp_id` reset, the `genexp_iter` reset, the restore of both, and each restore alone) now makes at least one script fail, as written and with an inner function. Before, only the maintainer's script caught one of them. The `genexp_iter` reset was caught only by a hang, and the three restores weren't caught at all.
+Each of five removals in `call()` (the `genexp_id` reset, the `genexp_iter` reset, both restores together, and each restore alone) now makes at least one script fail, as written and with an inner function. Before, only the maintainer's script caught one of them. The `genexp_iter` reset was caught only by a hang, and the three restores weren't caught at all.
 
 **Checks:** 335 tests and pre-commit pass.
 - **Security:** clear. It noted that upstream's own commit `933e177` carries a tool credit line. That commit isn't ours and isn't in our diff.
 - **Audit:** approved. It redid the five removals independently, and all fail. Its one nit, that the description still said "one commit", is fixed in the description draft (text only).
 - **Plan review and QA:** skipped, since this is a trivial test-only job.
+- Plain-English check: it confirmed the counts (335 tests, 20 to 23 scripts, +44 lines). It found the five removals described as "five steps" and some jargon. Both are fixed in the owner's texts and here.
