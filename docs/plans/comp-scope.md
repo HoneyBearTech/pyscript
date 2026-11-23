@@ -66,3 +66,47 @@ CEO, Researcher (done), Engineer, QA, Security Officer, Auditor, plan review, pl
 ## Out of scope
 - Module-level and class-body comprehension differences.
 - Any other change to how generator expressions run.
+
+## Record
+**2026-11-23. Built and checked.** The finished change is `team/comp-scope-pr`. It's one signed-off commit, `d4e8fe0` "use the new comprehension scoping in every function", on upstream master `933e177`. That's two commits after the planned base `dece34a`, because #921 and a docs line wrap landed upstream.
+
+**What shipped**
+- **Every function keeps its locals in `EvalLocalVar` cells.** `has_closure` and `check_for_closure()` are removed. `shares_locals()` keeps the "a function is running" test, so `eval()` and `exec()` are unchanged.
+- **Speed-ups:**
+  - `EvalLocalVar` has `__slots__` and takes its value as a positional argument;
+  - `ast_name()` reads the cell once;
+  - a function's own locals are marked `None` in `local_sym_table`, so `call()` no longer raises and catches an exception per empty cell.
+- **`get_names_set()`** no longer counts comprehension loop variables as the function's own. This fixes `len` after `[len for len in ...]`, and a module-level global read after a comprehension. The global case was already wrong on master.
+- **`ast_annassign()`** handles a function's own `__annotations__`.
+- **Error types.** An empty variable read in a generator expression gives `NameError` for the function's variables and `UnboundLocalError` for the generator's own loop variables, as in Python. This uses `EvalLoopVar`, a subclass that records its generator expression, plus a per-generator identity, `genexp_id`. Several of these cases were already wrong on master.
+- **Size:** `eval.py` adds 61 lines and removes 46.
+- **Docs:** the generator expression limitation now applies only at module level and in class bodies.
+
+**Speed**, measured over 3 processes with 20 alternating runs each:
+
+| Workload | Change vs master |
+|---|---|
+| arithmetic loop | -0.6 to +2.0% |
+| local reads and writes | +0.6 to +1.5% |
+| calls to a small function | +6.5 to +8.8% |
+| a comprehension | -1.3 to +1.8% |
+| deep recursion, plain function | up to +13.6% (900 levels, 10 locals) |
+| deep recursion, function with an inner function | 1.7 to 6.7 times as fast |
+
+**Checks:** 335 tests, pre-commit and the docs build with warnings treated as errors all pass. The commit merges cleanly with master.
+- **Research:** found 22 of 27 scripts differ in plain functions, and compared three options.
+- **Plan review:** found three problems, all folded in before Gate A:
+  - `exec()` would change;
+  - the docs must name class bodies;
+  - not all the new tests fail on master.
+- **QA:** pass. Its corrections to the drafts were made.
+- **Security:** fix round 1 fixed its should-fix, that deep recursion was up to 8 times slower because of the per-call exception. Its final check of `d4e8fe0` is clear.
+- **Audit:** four rounds, each finding a must-fix:
+  - **Round 1:** comprehension targets hid built-ins and globals, and a function's own `__annotations__` broke.
+  - **Round 2:** a generator expression read of an empty enclosing variable gave `UnboundLocalError` instead of `NameError`.
+  - **Round 3:** the generator's own loop variables gave `NameError`.
+  - **Round 4:** two generator expressions sharing one iterator were confused.
+
+  The owner approved rounds 3 and 4 beyond the usual two. The final narrow check approved. The remaining differences were all there on master too, and go in the PR's Note.
+
+**Open for Gate B:** the plan's 10% rule was set for the four main workloads, and those are all under 10%. Deep recursion in plain functions, added to the measurements later, reaches about 14%. The PR states this, and shows the narrower rule's numbers as an alternative.
