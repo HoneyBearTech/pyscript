@@ -100,3 +100,4 @@ CEO, Researcher, Plan Checker, Engineer, QA, Security Officer, Auditor and the p
 **Left as before (in the PR's Note):** defaults and base classes of a nested def or class; a class body reading its function's variables; a variable with no value yet when the middle function runs.
 
 **Rejected findings:** none.
+- Plain-English check: it confirmed every count. Its wording fixes were made in the owner's texts. It found that "over 300 scripts" couldn't be checked, since those scripts weren't kept, so the description now says "many more scripts". The reply also gained one sentence on the older parameter and loop-variable case (a late edit, disclosed at Gate B).
