@@ -72,3 +72,31 @@ CEO, Researcher, Plan Checker, Engineer, QA, Security Officer, Auditor and the p
 - A default value of a def nested inside another nested def that reads the outer function's variable. This fails the same way before and after #924, and it'll be listed in the PR's Note.
 - The plan check's cases that already differ on master, unless the fix also makes them match (see step 3).
 - Module-level and class-body comprehension scoping.
+
+## Record
+**2026-11-24. Built and checked.** The finished change is `team/issue-925-pr`: one signed-off commit, `06611bd` "Don't let an inner function read its caller's variables (#925)", on upstream master `148e2d3`. `eval.py` +90/-25, `tests/test_unit_eval.py` +978. After Gate B it goes on the fork as a new branch for Sean to open upstream.
+
+**What shipped:**
+- `resolve_nonlocals()` looks only in the table of the function the `def` is written in (`enclosing_sym_table()`, looking through class bodies tracked in `class_sym_tables`).
+- `get_names_set()` changes in three ways:
+  - nested `nonlocal` names are passed through;
+  - a class body's bindings and `global` no longer hide names its methods read (`inner_free`);
+  - a nested function's parameters and a comprehension's loop variables are its own (`param_names()`, `get_loop_target_names()`), and `x.attr` is checked as `x`.
+- New `test_closure_scopes_match_python`: 66 scripts, 132 runs. 24 scripts differ on master; 42 are controls. Removing any one part of the change makes it fail.
+- Speed: defining a function is about 2-4% slower near the top of the call stack, and about 16% faster at call depth 100. Calls and recursion are unchanged.
+- Docs: no change.
+
+**Checks:** 336 tests and pre-commit pass.
+- **Research:** 30 scripts, 15 wrong on master.
+- **Plan check:** found that the first prototype broke 8 class cases; the plan was fixed before approval.
+- **QA:** passed; every count and the speed table were confirmed. Its two text fixes were made.
+- **Security:** clear. Nothing leaks across scripts or contexts, and the new class list is always restored.
+- **Audit:** two fix rounds, then approved.
+  - Round 1: a method's parameters made the middle function share an outer variable.
+  - Round 2: comprehension loop targets like `items[0]` lost `items`.
+  - Each fix also corrected older cases. The final check found no regressions in 360 comparisons.
+- Five duplicate test scripts were dropped at the reviewers' suggestion.
+
+**Left as before (in the PR's Note):** defaults and base classes of a nested def or class; a class body reading its function's variables; a variable with no value yet when the middle function runs.
+
+**Rejected findings:** none.
