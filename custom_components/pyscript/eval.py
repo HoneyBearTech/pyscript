@@ -288,9 +288,9 @@ class LoopScope:
         return current
 
 
-def lambda_param_names(lambda_ast):
-    """Return the parameter names of a lambda."""
-    args = lambda_ast.args
+def param_names(func_ast):
+    """Return the parameter names of a function or lambda."""
+    args = func_ast.args
     params = [arg.arg for arg in args.posonlyargs + args.args + args.kwonlyargs]
     for arg in (args.vararg, args.kwarg):
         if arg is not None:
@@ -859,6 +859,8 @@ class EvalFunc:
                     local_names=self.local_names,
                 )
             )
+        # as in Python, share only the variables of the function we're written in, never a caller's
+        enclosing_sym_table = ast_ctx.enclosing_sym_table()
         for var_name in var_names:
             got_dot = var_name.find(".")
             if got_dot >= 0:
@@ -872,19 +874,12 @@ class EvalFunc:
                 self.local_sym_table[var_name] = None
                 continue
 
-            if var_name in nonlocal_names:
-                sym_table_idx = 1
-            else:
-                sym_table_idx = 0
-            for sym_table in reversed(ast_ctx.sym_table_stack[sym_table_idx:] + [ast_ctx.sym_table]):
-                if var_name in sym_table and isinstance(sym_table[var_name], EvalLocalVar):
-                    self.local_sym_table[var_name] = sym_table[var_name]
-                    break
-            else:
-                if var_name in nonlocal_names:
-                    val = await ast_ctx.ast_name(ast.Name(id=var_name, ctx=ast.Load()))
-                    if isinstance(val, EvalName) and got_dot < 0:
-                        raise SyntaxError(f"no binding for nonlocal '{var_name}' found")
+            if var_name in enclosing_sym_table and isinstance(enclosing_sym_table[var_name], EvalLocalVar):
+                self.local_sym_table[var_name] = enclosing_sym_table[var_name]
+            elif var_name in nonlocal_names:
+                val = await ast_ctx.ast_name(ast.Name(id=var_name, ctx=ast.Load()))
+                if isinstance(val, EvalName) and got_dot < 0:
+                    raise SyntaxError(f"no binding for nonlocal '{var_name}' found")
 
     def get_decorators(self):
         """Return the function decorators."""
@@ -1140,6 +1135,7 @@ class AstEval:
         self.config_entry = Function.hass.data.get(DOMAIN, {}).get(CONFIG_ENTRY, {})
         self.dec_eval_depth = 0
         self.class_sym_table: SymTable | None = None
+        self.class_sym_tables: list[SymTable] = []
         self.class_cell: list[type | None] | None = None
         self.class_global_names: set[str] = set()
         self.loop_scopes: tuple[LoopScope, ...] = ()
@@ -1298,6 +1294,7 @@ class AstEval:
         self.sym_table_stack.append(self.sym_table)
         self.sym_table = sym_table
         prev_class_sym_table, self.class_sym_table = self.class_sym_table, sym_table
+        self.class_sym_tables.append(sym_table)
         class_cell: list[type | None] = [None]
         prev_class_cell, self.class_cell = self.class_cell, class_cell
         prev_class_global_names, self.class_global_names = self.class_global_names, set()
@@ -1312,6 +1309,7 @@ class AstEval:
         finally:
             # restore the enclosing scope even if the class body raises and the exception is caught
             self.class_sym_table = prev_class_sym_table
+            self.class_sym_tables.pop()
             self.class_cell = prev_class_cell
             self.class_global_names = prev_class_global_names
             pending, self.class_pending_annotations = self.class_pending_annotations, prev_pending
@@ -1492,7 +1490,7 @@ class AstEval:
         if self.in_local_scope():
             enclosing_names = sorted(
                 name
-                for name in lambda_body_names(arg) - lambda_param_names(arg)
+                for name in lambda_body_names(arg) - param_names(arg)
                 if isinstance(self.sym_table.get(name), EvalLocalVar)
             )
         lambda_code = self.cached_lambda_code(arg, enclosing_names)
@@ -1510,7 +1508,7 @@ class AstEval:
             return set(self.cached_lambda_code(arg, candidates).co_freevars)
         except SyntaxError:
             # its body isn't native Python, so it fails when it's evaluated; until then, assume any name
-            return set(candidates) - lambda_param_names(arg)
+            return set(candidates) - param_names(arg)
 
     def cached_lambda_code(self, arg, enclosing_names):
         """Return the compiled code of a lambda that can read enclosing_names, compiling it once."""
@@ -1771,6 +1769,15 @@ class AstEval:
                     f"invalid name '{var_name}' (should be 'domain.entity' or 'domain.entity.attr')"
                 )
             self.assign_name(var_name, val)
+
+    def enclosing_sym_table(self):
+        """Return the symbol table of the function or module a function defined here is written in."""
+        # as in Python, a class body isn't an enclosing scope of its methods, so look through it
+        sym_table, idx = self.sym_table, len(self.sym_table_stack)
+        while idx > 0 and any(sym_table is table for table in self.class_sym_tables):
+            idx -= 1
+            sym_table = self.sym_table_stack[idx]
+        return sym_table
 
     def in_local_scope(self):
         """Return whether names are bound in a function's local scope, not at module level or in a class body."""
@@ -2668,8 +2675,13 @@ class AstEval:
             names.add(lhs.id)
         return names
 
-    async def get_names_set(self, arg, names, nonlocal_names, global_names, local_names):
-        """Recursively find all the names mentioned in the AST tree."""
+    async def get_names_set(self, arg, names, nonlocal_names, global_names, local_names, inner_free=None):
+        """
+        Recursively find all the names mentioned in the AST tree.
+
+        In a class body, inner_free collects the names its functions and classes read from outside,
+        which the class body's own names and global declarations don't hide.
+        """
 
         cls_name = arg.__class__.__name__
         if cls_name == "Attribute":
@@ -2735,14 +2747,30 @@ class AstEval:
                 for dec in arg.decorator_list:
                     await self.get_names_set(dec, names, nonlocal_names, global_names, local_names)
                 #
-                # find unbound names from the body of the function or class
+                # find unbound names from the body of the function or class; a name a nested
+                # function declares nonlocal comes from outside, even if it assigns it
                 #
-                inner_global, inner_names, inner_local = set(), set(), set()
+                inner_global, inner_names, inner_nonlocal = set(), set(), set()
+                if cls_name == "ClassDef":
+                    inner_local, class_inner_free = set(), set()
+                else:
+                    # a function's parameters are its own variables
+                    inner_local, class_inner_free = param_names(arg), None
                 for child in arg.body:
-                    await self.get_names_set(child, inner_names, None, inner_global, inner_local)
+                    await self.get_names_set(
+                        child, inner_names, inner_nonlocal, inner_global, inner_local, class_inner_free
+                    )
+                free_names = names if inner_free is None else inner_free
                 for name in inner_names:
-                    if name not in inner_local and name not in inner_global:
-                        names.add(name)
+                    # x.attr reads the variable x
+                    var_name = name.split(".", 1)[0]
+                    if var_name in inner_nonlocal or (
+                        var_name not in inner_local and var_name not in inner_global
+                    ):
+                        free_names.add(name)
+                if class_inner_free is not None:
+                    # as in Python, the functions in a class body don't see its names
+                    free_names.update(class_inner_free)
                 return
             elif cls_name == "Lambda":
                 # the defaults are in this scope; nothing in the body binds a name here
@@ -2750,12 +2778,49 @@ class AstEval:
                     await self.get_names_set(default, names, nonlocal_names, global_names, local_names)
                 names.update(self.lambda_free_names(arg))
                 return
+            elif cls_name in {"ListComp", "SetComp", "DictComp", "GeneratorExp"}:
+                # the first iterable is read here; the loop variables belong to the comprehension
+                comp_names, loop_names = set(), set()
+                for gen in arg.generators:
+                    loop_names.update(
+                        await self.get_loop_target_names(
+                            gen.target, comp_names, nonlocal_names, global_names, local_names
+                        )
+                    )
+                    for node in [gen.iter, *gen.ifs]:
+                        node_names = names if node is arg.generators[0].iter else comp_names
+                        await self.get_names_set(node, node_names, nonlocal_names, global_names, local_names)
+                for node in (getattr(arg, field, None) for field in ("elt", "key", "value")):
+                    if node is not None:
+                        await self.get_names_set(node, comp_names, nonlocal_names, global_names, local_names)
+                names.update(name for name in comp_names if name.split(".", 1)[0] not in loop_names)
+                return
             elif cls_name == "Delete":
                 for arg1 in arg.targets:
                     if isinstance(arg1, ast.Name):
                         local_names.add(arg1.id)
         for child in ast.iter_child_nodes(arg):
+            await self.get_names_set(child, names, nonlocal_names, global_names, local_names, inner_free)
+
+    async def get_loop_target_names(self, target, names, nonlocal_names, global_names, local_names):
+        """Return the names a comprehension's loop target binds, adding the names it reads to names."""
+        if isinstance(target, ast.Name):
+            return {target.id}
+        if isinstance(target, ast.Starred):
+            return await self.get_loop_target_names(
+                target.value, names, nonlocal_names, global_names, local_names
+            )
+        if isinstance(target, (ast.Tuple, ast.List)):
+            bound = set()
+            for elt in target.elts:
+                bound |= await self.get_loop_target_names(
+                    elt, names, nonlocal_names, global_names, local_names
+                )
+            return bound
+        # assigning to obj.attr or items[index] reads obj, items and index
+        for child in ast.iter_child_nodes(target):
             await self.get_names_set(child, names, nonlocal_names, global_names, local_names)
+        return set()
 
     async def get_names(self, this_ast=None, nonlocal_names=None, global_names=None, local_names=None):
         """Return set of all the names mentioned in our AST tree."""

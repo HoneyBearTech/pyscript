@@ -6770,6 +6770,984 @@ async def test_function_locals_match_python(hass):
     await run_tests_compared_with_python(hass, sources)
 
 
+#
+# the variables a function shares with the functions it's written in, never its caller's, compared
+# with CPython; each is run as written and with an inner function
+#
+CLOSURE_SCOPE_TESTS = [
+    # the script from #925: make()'s function reads the module's variable, not its caller's
+    """
+label = "global"
+def make():
+    def read():
+        return label
+    return read
+def f(label):
+    return make()
+result = f("caller")()
+""",
+    # the same, with a lambda in the caller
+    """
+label = "global"
+def make():
+    def read():
+        return label
+    return read
+def f(label):
+    g = lambda: label
+    return make()
+result = f("caller")()
+""",
+    # a function two levels deep
+    """
+label = "global"
+def make():
+    def mid():
+        def read():
+            return label
+        return read
+    return mid()
+def f(label):
+    return make()
+result = f("caller")()
+""",
+    # a method of a class made in make()
+    """
+label = "global"
+def make():
+    class C:
+        def read(self):
+            return label
+    return C()
+def f(label):
+    return make()
+result = f("caller").read()
+""",
+    # a method of a class in a class
+    """
+label = "global"
+def make():
+    class A:
+        class B:
+            def read(self):
+                return label
+    return A.B()
+def f(label):
+    return make()
+result = f("caller").read()
+""",
+    # make() called from a class body in the caller
+    """
+label = "global"
+def make():
+    def read():
+        return label
+    return read
+def f(label):
+    class K:
+        r = make()
+    return K.r
+result = f("caller")()
+""",
+    # a decorator's wrapper, applied in the caller
+    """
+label = "global"
+def deco(fn):
+    def wrapper():
+        return label + fn()
+    return wrapper
+def f(label):
+    @deco
+    def g():
+        return "x"
+    return g
+result = f("caller")()
+""",
+    # make() calling itself
+    """
+label = "global"
+def make(n):
+    def read():
+        return label
+    if n:
+        return make(n - 1)
+    return read
+def f(label):
+    return make(2)
+result = f("caller")()
+""",
+    # the caller's caller has the name too
+    """
+label = "global"
+def make():
+    def read():
+        return label
+    return read
+def mid(label):
+    return make()
+def f(label):
+    return mid("mid")
+result = f("caller")()
+""",
+    # a caller's parameter with the name of a built-in
+    """
+def make():
+    def read():
+        return len
+    return read
+def f(len):
+    return make()
+result = f(5)() is len
+""",
+    # a name that only the caller has
+    """
+def make():
+    def read():
+        try:
+            return zzz
+        except NameError:
+            return "NameError"
+    return read
+def f(zzz):
+    return make()
+result = f(5)()
+""",
+    # the same, two levels deep, with an inner function in the caller
+    """
+def make():
+    def mid():
+        def read():
+            try:
+                return zzz
+            except NameError:
+                return "NameError"
+        return read()
+    return mid()
+def f():
+    zzz = "caller"
+    def g():
+        return zzz
+    return make()
+result = f()
+""",
+    # make() called by eval()
+    """
+label = "global"
+def make():
+    def read():
+        return label
+    return read
+def g(label):
+    return f()
+def f():
+    return eval("make()")
+result = g("caller")()
+""",
+    # the caller's own variable, and a function called in make()
+    """
+label = "global"
+def make():
+    def read():
+        return label
+    return read
+def f():
+    label = "caller"
+    return make()
+result = f()()
+""",
+    """
+label = "global"
+def make():
+    def read():
+        return label
+    return read()
+def f(label):
+    return make()
+result = f("caller")
+""",
+    # a lambda, comprehension and generator expression in a function in make()
+    """
+x = "global"
+def make():
+    def middle():
+        return lambda: x
+    return middle()
+def f(x):
+    return make()
+result = f("caller")()
+""",
+    """
+x = "global"
+def make():
+    def middle():
+        return [x for _ in range(1)]
+    return middle()
+def f(x):
+    return make()
+result = f("caller")
+""",
+    """
+x = "global"
+def make():
+    def middle():
+        return (x for _ in range(1))
+    return middle()
+def f(x):
+    return list(make())
+result = f("caller")
+""",
+    # a lambda two callers down
+    """
+x = "global"
+def make():
+    def mid():
+        return [lambda: x][0]()
+    return mid()
+def g(x):
+    h = lambda: x
+    return make()
+def f(x):
+    return g("g")
+result = f("f")
+""",
+    # a global declaration in the middle function
+    """
+x = "global"
+def f():
+    x = "f"
+    def mid():
+        global x
+        def read():
+            return x
+        return read()
+    return mid()
+result = f()
+""",
+    # a name a class body assigns, read in a method's inner function, and only the caller has
+    """
+x = "global"
+def make():
+    class C:
+        x = "class"
+        def m(self):
+            def inner():
+                return x
+            return inner()
+    return C().m()
+def f(x):
+    return make()
+result = f("caller")
+""",
+    # a function with a trigger decorator
+    """
+def time_trigger(*args, **kwargs):
+    return lambda fn: fn
+x = "global"
+def make():
+    def mid():
+        @time_trigger("once(2099-01-01 00:00:00)")
+        def read():
+            return x
+        return read()
+    return mid()
+def f(x):
+    return make()
+result = f("caller")
+""",
+    # a nested function's parameters and a comprehension's loop variables are their own, so the
+    # middle function doesn't share the name
+    """
+x = "global"
+def f():
+    x = "outer"
+    def mid():
+        def a(x, /):
+            return x.real
+        def b(*x, **kw):
+            def g():
+                return x
+            return g()
+        def c(*, x=1, **x2):
+            return x
+        def d(**x):
+            return x
+        e = lambda x: x
+        return eval("x"), "x" in locals(), a(1), b(2), c(), d(), e(3)
+    return mid()
+result = f()
+""",
+    """
+x = "global"
+y = "global"
+def f():
+    x = "outer"
+    y = "outer"
+    def mid():
+        r = [x for x in range(2)], list(x for x in range(2))
+        def g():
+            return [[x for x in z] for z in [[1]]], {x: 1 for x in range(1)}, {x for x in range(1)}
+        def h():
+            return [y for y in y]
+        return eval("x"), "x" in locals(), r, g(), h()
+    return mid()
+result = f()
+""",
+    # controls: the function's own variable, when the caller has the name
+    """
+label = "global"
+def make():
+    label = "make"
+    def read():
+        return label
+    return read
+def f(label):
+    return make()
+result = f("caller")()
+""",
+    # controls: a class variable with the name, and recursion with its own variable
+    """
+label = "global"
+def make():
+    label = "make"
+    class A:
+        label = "class"
+        def read(self):
+            return label
+    return A()
+def f(label):
+    return make()
+result = f("caller").read()
+""",
+    """
+def outer(n):
+    v = n
+    def inner():
+        return v
+    if n > 0:
+        outer(n - 1)
+    return inner()
+def f(label):
+    return outer(2)
+result = f("caller")
+""",
+    # controls: a closure called later, from a different caller, and after its function has returned
+    """
+label = "global"
+def make():
+    def read():
+        return label
+    return read
+r = make()
+def f(label):
+    return r()
+result = f("caller")
+""",
+    """
+x = "global"
+def f():
+    x = "f"
+    def mid():
+        def read():
+            return x
+        return read
+    return mid
+m = f()
+def caller(x):
+    return m()()
+result = [m()(), caller("caller")]
+""",
+    """
+def f():
+    x = "f"
+    class C:
+        x = "class"
+        def m(self):
+            def g():
+                return x
+            return g
+    return C().m()
+def caller(x):
+    return f()()
+result = caller("caller")
+""",
+    # controls: nonlocal one and two levels deep, when the caller has the name
+    """
+def make():
+    x = 1
+    def setx():
+        nonlocal x
+        x = 10
+    setx()
+    return x
+def f(x):
+    return make()
+result = f(5)
+""",
+    """
+def make():
+    x = 1
+    def mid():
+        def inner():
+            nonlocal x
+            x = 10
+        inner()
+    mid()
+    return x
+def f(x):
+    return make()
+result = f(5)
+""",
+    # controls: nonlocal two levels deep, from a function called later and from methods
+    """
+def f():
+    n = 0
+    def mid():
+        def inc():
+            nonlocal n
+            n += 1
+            return n
+        return inc
+    return mid()
+c = f()
+def caller(n):
+    return c()
+result = [c(), caller(100), c()]
+""",
+    """
+def f():
+    x = 1
+    def mid():
+        class C:
+            def set(self):
+                nonlocal x
+                x = 2
+        C().set()
+    mid()
+    return x
+result = f()
+""",
+    """
+def f():
+    x = 1
+    def mid():
+        class A:
+            class B:
+                def set(self):
+                    nonlocal x
+                    x += 5
+        A.B().set()
+    mid()
+    return x
+def caller(x):
+    return f()
+result = caller(100)
+""",
+    # control: a parameter of the middle function hides the name
+    """
+x = "global"
+def f():
+    x = "f"
+    def mid():
+        def inner(x):
+            def read():
+                return x
+            return read
+        return inner("param")()
+    return mid()
+result = f()
+""",
+    # controls: a class in a middle function whose body assigns, or declares global, the name its
+    # methods read; methods don't see a class body's names
+    """
+x = "global"
+def f():
+    x = "f"
+    def mid():
+        class C:
+            x = "class"
+            def read(self):
+                return x
+        return C().read()
+    return mid()
+result = f()
+""",
+    """
+x = "global"
+def f():
+    x = "f"
+    def mid():
+        class C:
+            global x
+            def read(self):
+                return x
+        return C().read()
+    return mid()
+result = f()
+""",
+    """
+x = "global"
+def f():
+    x = "f"
+    def mid():
+        class C:
+            x = "class"
+            def read(self):
+                nonlocal x
+                x = "changed"
+        C().read()
+    mid()
+    return x
+result = f()
+""",
+    """
+x = "global"
+def f():
+    x = "f"
+    def mid():
+        class C:
+            x = "class"
+            def decorate(fn):
+                def wrapped(self):
+                    return x
+                return wrapped
+            @decorate
+            def read(self):
+                pass
+        return C().read()
+    return mid()
+result = f()
+""",
+    """
+x = "global"
+def f():
+    x = "f"
+    def mid():
+        class A:
+            x = "A"
+            class B:
+                x = "B"
+                def read(self):
+                    return x
+        return A.B().read()
+    return mid()
+result = f()
+""",
+    """
+x = "global"
+def f():
+    x = "f"
+    def mid():
+        class C:
+            x = "class"
+            def read(self):
+                return [x for _ in range(1)], list(x for _ in range(1)), (lambda: x)()
+        return C().read()
+    return mid()
+result = f()
+""",
+    """
+def f():
+    x = "f"
+    def mid():
+        class C:
+            x = "class"
+            def m(self):
+                return (y + x for y in "ab")
+        return C().m()
+    return list(mid())
+result = f()
+""",
+    """
+def f():
+    x = "f"
+    def mid():
+        class C:
+            x = "class"
+            def m(self):
+                def inner():
+                    return [x for _ in range(1)]
+                return inner()
+        return C().m()
+    return mid()
+result = f()
+""",
+    # ... with trigger decorators on the method
+    """
+def event_trigger(*args, **kwargs):
+    return lambda fn: fn
+def state_trigger(*args, **kwargs):
+    return lambda fn: fn
+x = "global"
+def f():
+    x = "f"
+    def mid():
+        class C:
+            x = "class"
+            @event_trigger("test925")
+            def read(self):
+                return x
+            @state_trigger("sensor.test925 == 'on'")
+            def read2(self):
+                return x
+        return C().read(), C().read2()
+    return mid()
+result = f()
+""",
+    # ... the class body binding the name in other ways
+    """
+err = "global"
+def f():
+    err = "f"
+    def mid():
+        class C:
+            try:
+                1 / 0
+            except ZeroDivisionError as err:
+                pass
+            def m(self):
+                return err
+        return C().m()
+    return mid()
+result = f()
+""",
+    """
+x = "global"
+def f():
+    x = "f"
+    def mid():
+        class C:
+            x = "class"
+            del x
+            def m(self):
+                return x
+        return C().m()
+    return mid()
+result = f()
+""",
+    """
+import contextlib
+def f():
+    x = "f"
+    v = "f"
+    math = "f"
+    def mid():
+        class C:
+            for x in range(2):
+                pass
+            with contextlib.nullcontext("class") as v:
+                pass
+            import math
+            def m(self):
+                return x, v, math
+        return C().m(), C.x, C.v
+    return mid()
+result = f()
+""",
+    """
+def f():
+    a = "fa"
+    b = "fb"
+    def mid():
+        class C:
+            a: str = "class"
+            b = "c"
+            b += "lass"
+            def m(self):
+                return a, b
+        return C().m()
+    return mid()
+result = f()
+""",
+    """
+def f():
+    read = "f"
+    B = "f"
+    def mid():
+        class A:
+            def read(self):
+                return read, B
+            class B:
+                pass
+        return A().read()
+    return mid()
+result = f()
+""",
+    """
+def f():
+    x = "f"
+    def mid():
+        class C:
+            x = "class"
+            if True:
+                def m(self):
+                    return x
+            n = 0
+            while n < 1:
+                n += 1
+                def k(self):
+                    return x
+        return C().m(), C().k()
+    return mid()
+result = f()
+""",
+    """
+def f():
+    scale = 3
+    def mid():
+        class C:
+            scale = 100
+            def __init__(self, v):
+                self.v = v
+            @property
+            def big(self):
+                return self.v * scale
+            @classmethod
+            def make(cls):
+                return cls(scale)
+            @staticmethod
+            def st():
+                return scale
+        return C.make().big, C.st(), C.scale
+    return mid()
+result = f()
+""",
+    """
+def f():
+    x = "f"
+    class A:
+        x = "A"
+        def m(self):
+            class B:
+                x = "B"
+                def n(self):
+                    return x
+            return B().n()
+    return A().m()
+def caller(x):
+    return f()
+result = caller("caller")
+""",
+    """
+x = "global"
+def f():
+    x = "f"
+    class A:
+        global x
+        class B:
+            def m(self):
+                return x
+    return A.B().m()
+result = f()
+""",
+    # ... and the methods' own parameters and comprehension loop variables, which the middle
+    # function doesn't share
+    """
+x = "global"
+def f():
+    x = "outer"
+    def mid():
+        class C:
+            x = "class"
+            def a(self, x):
+                return x
+            def b(self, x, /):
+                return x
+            def c(self, *x):
+                def g():
+                    return x
+                return g()
+            def d(self, *, x=1):
+                return x
+            def e(self, **x):
+                return x
+            l = lambda self, x: x
+        c = C()
+        return eval("x"), "x" in locals(), c.a(1), c.b(2), c.c(3), c.d(), c.e(), c.l(4)
+    return mid()
+result = f()
+""",
+    """
+x = "global"
+y = "global"
+def f():
+    x = "outer"
+    y = "outer"
+    def mid():
+        class C:
+            x = "class"
+            y = "class"
+            def m(self):
+                return [x for x in range(2)], list(x for x in range(2)), {x for x in range(1)}
+            def n(self):
+                return [[x for x in z] for z in [[1]]], {x: 1 for x in range(1)}, [y for y in y]
+        return eval("x"), "x" in locals(), C().m(), C().n()
+    return mid()
+result = f()
+""",
+    # controls: a comprehension's loop target that assigns to a subscript or attribute reads the
+    # container, index and object from outside, in a middle function, a nested def and a method
+    """
+class NS:
+    pass
+def f():
+    items = [0, 0, 0, 0]
+    index = 1
+    obj = NS()
+    def mid():
+        a = [1 for items[0] in range(3)]
+        b = {1 for items[index] in range(3)}
+        c = list(1 for obj.attr in range(3))
+        def g():
+            return [a for (a, items[index + 1]) in [(1, 2), (3, 4)]], {i: 1 for i, items[i] in [(3, 5)]}
+        return a, b, c, g()
+    return mid(), items, obj.attr
+result = f()
+""",
+    """
+class NS:
+    pass
+def f():
+    items = [0, 0, 0]
+    index = 2
+    obj = NS()
+    def mid():
+        class C:
+            items = index = obj = "class"
+            def m(self):
+                return (
+                    [a for a in range(2) for items[a] in [a + 5]],
+                    [[1 for items[index] in range(1)] for _ in range(2)],
+                    [1 for obj.attr in range(2)],
+                )
+        return C().m()
+    return mid(), items, obj.attr
+result = f()
+""",
+    # controls: global declarations at other levels
+    """
+x = "global"
+def f():
+    x = "f"
+    def mid():
+        def read():
+            global x
+            return x
+        return read(), x
+    return mid()
+result = f()
+""",
+    """
+x = "global"
+def f():
+    def mid():
+        def setx():
+            global x
+            x = "inner set"
+        setx()
+    mid()
+    return x
+def caller(x):
+    return f()
+result = caller("caller")
+""",
+    # controls: del, except ... as, and decorators
+    """
+def f():
+    x = "f"
+    def mid():
+        def read():
+            try:
+                return x
+            except NameError:
+                return "NameError"
+        return read
+    r = mid()
+    a = r()
+    del x
+    return a, r()
+result = f()
+""",
+    """
+def f():
+    def mid():
+        try:
+            1 / 0
+        except ZeroDivisionError as err:
+            def read():
+                return type(err).__name__
+            return read()
+    return mid()
+def caller(err):
+    return f()
+result = caller("caller")
+""",
+    """
+def f():
+    tag = "f"
+    def mid():
+        def deco(fn):
+            def w():
+                return tag + fn()
+            return w
+        @deco
+        def g():
+            return "g"
+        return g()
+    return mid()
+def caller(tag):
+    return f()
+result = caller("caller")
+""",
+    """
+import functools
+def f():
+    prefix = "f:"
+    def deco(fn):
+        @functools.wraps(fn)
+        def w(*a):
+            return prefix + fn(*a)
+        return w
+    def mid():
+        @deco
+        def g(v):
+            return v
+        return g("x"), g.__name__
+    return mid()
+result = f()
+""",
+    # controls: eval() and exec()
+    """
+def f():
+    x = "f"
+    def mid():
+        def read():
+            return x
+        return eval("read()")
+    return mid()
+result = f()
+""",
+    """
+x = "global"
+def f():
+    x = "f"
+    def mid():
+        d = {}
+        exec("def g():\\n    return x", globals(), d)
+        return d["g"]()
+    return mid()
+def caller(x):
+    return f()
+result = caller("caller")
+""",
+]
+
+
+async def test_closure_scopes_match_python(hass):
+    """Test that a function shares the variables of the functions it's written in, not its caller's."""
+    sources = CLOSURE_SCOPE_TESTS + [with_inner_function(source) for source in CLOSURE_SCOPE_TESTS]
+    await run_tests_compared_with_python(hass, sources)
+
+
 # scripts compared with CPython; the first 44 came with the first version of this change
 STOP_ITERATION_TESTS = [
     """
